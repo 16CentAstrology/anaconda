@@ -20,10 +20,10 @@
 from blivet import arch
 from blivet.zfcp import zfcp
 
+from pyanaconda.anaconda_loggers import get_module_logger
 from pyanaconda.core.configuration.anaconda import conf
 from pyanaconda.core.dbus import DBus
 from pyanaconda.modules.common.base import KickstartBaseModule
-from pyanaconda.anaconda_loggers import get_module_logger
 from pyanaconda.modules.common.constants.objects import ZFCP
 from pyanaconda.modules.storage.zfcp.discover import ZFCPDiscoverTask
 from pyanaconda.modules.storage.zfcp.zfcp_interface import ZFCPInterface
@@ -37,7 +37,7 @@ class ZFCPModule(KickstartBaseModule):
     def __init__(self):
         super().__init__()
         self.reload_module()
-        self._zfcp_data = list()
+        self._zfcp_data = []
 
     def publish(self):
         """Publish the module."""
@@ -84,3 +84,15 @@ class ZFCPModule(KickstartBaseModule):
     def setup_kickstart(self, data):
         """Setup the kickstart data."""
         data.zfcp.zfcp = self._zfcp_data
+        # So far, the data contains explicit zfcp statements from a
+        # kickstart file used as input for the installation. Now, add any
+        # missing entries that come from user interaction with the GUI.
+        for fcpdev in zfcp.fcpdevs:
+            zd = data.zfcp.dataClass()
+            zd.devnum = fcpdev.devnum
+            if "wwpn" in dir(fcpdev):
+                zd.wwpn = fcpdev.wwpn
+            if "fcplun" in dir(fcpdev):
+                zd.fcplun = fcpdev.fcplun
+            if zd not in data.zfcp.dataList():
+                data.zfcp.dataList().append(zd)

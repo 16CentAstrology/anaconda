@@ -514,6 +514,36 @@ Specify screen size for the installer. Use format nxm, where n is the
 number of horizontal pixels, m the number of vertical pixels. The lowest
 supported resolution is 800x600.
 
+.. inst.rdp:
+
+inst.rdp
+^^^^^^^^
+
+Enable Remote Desktop Protocol-controlled installation. You will need to connect to
+the machine using an RDP client application. An RDP install implies that the installed
+system will boot up in in multiuser.target instead of to the graphical login screen.
+
+Multiple RDP clients can connect.
+
+When using ``inst.rdp``, you also need to set RDP username and password using the
+``inst.rdp.username`` and ``inst.rdp.password`` boot options.
+
+.. inst.rdp.username:
+
+inst.rdp.username
+^^^^^^^^^^^^^^^^^
+
+Set username for the RDP session. To enable RDP access, also use the
+``inst.rdp`` and ``inst.rdp.password`` boot options.
+
+.. inst.rdp.password:
+
+inst.rdp.password
+^^^^^^^^^^^^^^^^^
+
+Set password for the RDP session. To enable RDP access, also use the
+``inst.rdp`` and ``inst.rdp.username`` boot options.
+
 .. inst.vnc:
 
 inst.vnc
@@ -525,12 +555,19 @@ may connect.
 
 A system installed with VNC will start in text mode (runlevel 3).
 
+This option is deprecated and will be removed in future releases.
+Use ``inst.rdp`` instead.
+
+
 .. inst.vncpassword:
 
 inst.vncpassword
 ^^^^^^^^^^^^^^^^
 
 Set a password on the VNC server used by the installer.
+
+This option is deprecated and will be removed in future releases.
+Use ``inst.rdp.password`` and related boot options instead.
 
 .. inst.vncconnect:
 
@@ -543,6 +580,8 @@ inst.vncconnect
 
     Use with ``vncviewer -listen``.
 
+This option is deprecated and will be removed in future releases.
+
 .. inst.xdriver:
 
 inst.xdriver
@@ -550,6 +589,8 @@ inst.xdriver
 
 Specify the X driver that should be used during installation and on the
 installed system.
+
+This boot options is deprecated and has no effect.
 
 .. inst.usefbx
 
@@ -559,6 +600,9 @@ inst.usefbx
 Use the framebuffer X driver (``fbdev``) rather than a hardware-specific driver.
 
 Equivalent to ``inst.xdriver=fbdev``.
+
+
+This boot options is deprecated and has no effect.
 
 .. inst.xtimeout:
 
@@ -656,6 +700,22 @@ will be used by default, if found.
 
 See the |anacondalogging|_ for more info on setting up logging via virtio.
 
+.. inst.wait_for_disks:
+
+inst.wait_for_disks
+^^^^^^^^^^^^^^^^^^^
+
+Because disks can take some time to appear, an additional delay of 5 seconds
+has been added.  This can be overridden by boot argument
+`inst.wait_for_disks=<value>` to let dracut wait up to <value> additional
+seconds (0 turns the feature off, causing dracut to only wait up to 500ms).
+Alternatively, if the `OEMDRV` device is known to be present but too slow to be
+autodetected, the user can boot with an argument like `inst.dd=hd:LABEL=OEMDRV`
+to indicate that dracut should expect an `OEMDRV` device and not start the
+installer until it appears.
+
+This functionality could be used to load kickstart and driverdisks.
+
 
 Boot loader options
 -------------------
@@ -677,6 +737,10 @@ inst.sdboot
 Use systemd-boot as the bootloader. Note that there's no attempt to validate that
 this will work for your platform or anything; it assumes that if you ask for it,
 you want to try.
+
+Note that this works only for package-based installations, where the bootloader can be chosen at
+install time. For live images, this can work only if the live image was built with systemd-boot
+instead of grub.
 
 .. inst.leavebootorder:
 
@@ -802,13 +866,6 @@ Deprecated Options
 These options should still be accepted by the installer, but they are
 deprecated and may be removed soon.
 
-.. method:
-
-method
-^^^^^^
-
-This is an alias for `inst.repo`_.
-
 .. dns:
 
 dns
@@ -854,15 +911,6 @@ ksdevice
 ``ksdevice=<DEV>``
     Replaced with `bootdev`_
 
-.. inst.nompath:
-
-inst.nompath
-^^^^^^^^^^^^
-
-This was used to disable support for multipath devices. Anaconda did not
-support proper multipath disabling for a long time, the only thing this did
-was disable parts of GUI.
-
 Removed Options
 ---------------
 
@@ -890,6 +938,11 @@ blacklist, nofirewire
 ``modprobe.blacklist=<mod1>,<mod2>...``
 
 You can add the firewire module to a denylist with ``modprobe.blacklist=firewire_ohci``.
+
+method:
+^^^^^^
+
+Use `inst.repo`_ instead.
 
 serial
 ^^^^^^
@@ -1006,7 +1059,7 @@ Anaconda does not support single language mode anymore.
 repo=nfsiso:...
 ^^^^^^^^^^^^^^^
 
-Anaconda no longer needs explicit specification that a NFS location is an ISO image.
+Anaconda no longer needs explicit specification that an NFS location is an ISO image.
 The difference between an installable tree and a dir with an ``.iso`` file is now
 automatically detected, so this is the same as ``inst.repo=nfs:``...
 
@@ -1017,6 +1070,15 @@ inst.nodmraid
 
 Anaconda no longer supports dmraid, BIOS/Firmware RAID devices are now handled by
 ``mdadm``.
+
+.. inst.nompath:
+
+inst.nompath
+^^^^^^^^^^^^
+
+This was used to disable support for multipath devices. Anaconda did not
+support proper multipath disabling for a long time, the only thing this did
+was disable parts of GUI.
 
 .. inst.product:
 

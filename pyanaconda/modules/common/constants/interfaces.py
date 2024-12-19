@@ -17,10 +17,15 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 from dasbus.identifier import DBusInterfaceIdentifier
-from pyanaconda.modules.common.constants.namespaces import ANACONDA_NAMESPACE, \
-    MODULES_NAMESPACE, PARTITIONING_NAMESPACE, DEVICE_TREE_NAMESPACE, PAYLOAD_NAMESPACE, \
-    SOURCE_NAMESPACE
 
+from pyanaconda.modules.common.constants.namespaces import (
+    ANACONDA_NAMESPACE,
+    DEVICE_TREE_NAMESPACE,
+    MODULES_NAMESPACE,
+    PARTITIONING_NAMESPACE,
+    PAYLOAD_NAMESPACE,
+    SOURCE_NAMESPACE,
+)
 
 KICKSTART_MODULE = DBusInterfaceIdentifier(
     namespace=MODULES_NAMESPACE
@@ -33,6 +38,11 @@ PARTITIONING = DBusInterfaceIdentifier(
 TASK = DBusInterfaceIdentifier(
     namespace=ANACONDA_NAMESPACE,
     basename="Task"
+)
+
+TASK_CATEGORY = DBusInterfaceIdentifier(
+    namespace=ANACONDA_NAMESPACE,
+    basename="TaskCategory"
 )
 
 DEVICE_TREE_VIEWER = DBusInterfaceIdentifier(
@@ -121,16 +131,6 @@ PAYLOAD_SOURCE_REPO_PATH = DBusInterfaceIdentifier(
 PAYLOAD_SOURCE_CLOSEST_MIRROR = DBusInterfaceIdentifier(
     namespace=SOURCE_NAMESPACE,
     basename="ClosestMirror"
-)
-
-PAYLOAD_SOURCE_NFS = DBusInterfaceIdentifier(
-    namespace=SOURCE_NAMESPACE,
-    basename="NFS"
-)
-
-PAYLOAD_SOURCE_URL = DBusInterfaceIdentifier(
-    namespace=SOURCE_NAMESPACE,
-    basename="URL"
 )
 
 PAYLOAD_SOURCE_HARDDRIVE = DBusInterfaceIdentifier(

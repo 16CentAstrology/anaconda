@@ -28,19 +28,23 @@ Each test is called with the name of .po file to test as an argument. A test
 passes if it returns without raising an exception.
 """
 
-import os, warnings
+import os
+import warnings
 
 _tests = []
 
 # Gather tests from this directory
+import importlib
 import pkgutil
+
 for finder, mod_name, _ispkg in pkgutil.iter_modules(__path__):
     # Skip __main__
     if mod_name == "__main__":
         continue
 
     # Load the module
-    module = finder.find_module(mod_name).load_module(mod_name)
+    full_name = "{}.{}".format(__name__, mod_name)
+    module = importlib.import_module(full_name)
 
     # Look for attributes that start with 'test_' and add them to the test list
     for attrname, attr in module.__dict__.items():

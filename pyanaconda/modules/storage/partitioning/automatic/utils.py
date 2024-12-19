@@ -18,18 +18,20 @@
 # Red Hat Author(s): Dave Lehman <dlehman@redhat.com>
 #
 import parted
-
-from blivet.size import Size
-from blivet.devices.partition import PartitionDevice, FALLBACK_DEFAULT_PART_SIZE
 from blivet.devices.luks import LUKSDevice
 from blivet.devices.lvm import DEFAULT_THPOOL_RESERVE
-from blivet.errors import NotEnoughFreeSpaceError, NoDisksError
+from blivet.devices.partition import FALLBACK_DEFAULT_PART_SIZE, PartitionDevice
+from blivet.errors import NoDisksError, NotEnoughFreeSpaceError
 from blivet.formats import get_format
 from blivet.formats.luks import LUKS2PBKDFArgs
 from blivet.partitioning import get_free_regions, get_next_partition_type
-
-from pykickstart.constants import AUTOPART_TYPE_BTRFS, AUTOPART_TYPE_LVM, \
-    AUTOPART_TYPE_LVM_THINP, AUTOPART_TYPE_PLAIN
+from blivet.size import Size
+from pykickstart.constants import (
+    AUTOPART_TYPE_BTRFS,
+    AUTOPART_TYPE_LVM,
+    AUTOPART_TYPE_LVM_THINP,
+    AUTOPART_TYPE_PLAIN,
+)
 
 from pyanaconda.anaconda_loggers import get_module_logger
 from pyanaconda.core.configuration.anaconda import conf
@@ -350,6 +352,7 @@ def schedule_partitions(storage, disks, implicit_devices, scheme, requests, encr
     # First pass is for partitions only. We'll do LVs later.
     #
     for request in requests:
+        use_disks = disks[:]
         if request.lv and scheme in (AUTOPART_TYPE_LVM, AUTOPART_TYPE_LVM_THINP):
             continue
 
@@ -376,9 +379,9 @@ def schedule_partitions(storage, disks, implicit_devices, scheme, requests, encr
             is_gpt = (stage1_device and
                       getattr(stage1_device.format, "label_type", None) == "gpt")
             has_bios_boot = (stage1_device and
-                             any([p.format.type == "biosboot"
-                                  for p in storage.partitions
-                                  if p.disk == stage1_device]))
+                             any(p.format.type == 'biosboot'
+                                 for p in storage.partitions
+                                 if p.disk == stage1_device))
             if (storage.bootloader.skip_bootloader or
                 not (stage1_device and stage1_device.is_disk and
                      is_gpt and not has_bios_boot)):
@@ -388,6 +391,9 @@ def schedule_partitions(storage, disks, implicit_devices, scheme, requests, encr
                 log.debug("%s", request)
                 log.debug("%s", stage1_device)
                 continue
+
+            log.debug("making sure biosboot is placed on %s", stage1_device.name)
+            use_disks = [stage1_device]
 
         if request.size > all_free[0]:
             # no big enough free space for the requested partition
@@ -407,7 +413,7 @@ def schedule_partitions(storage, disks, implicit_devices, scheme, requests, encr
                                     grow=request.grow,
                                     maxsize=request.max_size,
                                     mountpoint=request.mountpoint,
-                                    parents=disks)
+                                    parents=use_disks)
 
         # schedule the device for creation
         storage.create_device(dev)
@@ -422,7 +428,8 @@ def schedule_partitions(storage, disks, implicit_devices, scheme, requests, encr
                                   parents=dev)
             storage.create_device(luks_dev)
 
-        if scheme in (AUTOPART_TYPE_LVM, AUTOPART_TYPE_LVM_THINP, AUTOPART_TYPE_BTRFS):
+        if scheme in (AUTOPART_TYPE_LVM, AUTOPART_TYPE_LVM_THINP, AUTOPART_TYPE_BTRFS) and \
+                implicit_devices:
             # doing LVM/BTRFS -- make sure the newly created partition fits in some
             # free space together with one of the implicitly requested partitions
             smallest_implicit = sorted(implicit_devices, key=lambda d: d.size)[0]

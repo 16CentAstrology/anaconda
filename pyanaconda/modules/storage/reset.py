@@ -22,6 +22,7 @@ from blivet.errors import UnusableConfigurationError
 from blivet.fcoe import fcoe
 from blivet.i18n import _
 from blivet.iscsi import iscsi
+from blivet.nvme import nvme
 from blivet.zfcp import zfcp
 
 from pyanaconda.anaconda_loggers import get_module_logger
@@ -37,7 +38,7 @@ __all__ = ["ScanDevicesTask"]
 class ScanDevicesTask(Task):
     """A task for scanning all devices.
 
-    Scan the system’s storage configuration and store it in the tree.
+    Scan the system's storage configuration and store it in the tree.
     This task will reset the given instance of Blivet.
     """
 
@@ -73,6 +74,7 @@ class ScanDevicesTask(Task):
 
         iscsi.startup()
         fcoe.startup()
+        nvme.startup()
 
         if arch.is_s390():
             zfcp.startup()

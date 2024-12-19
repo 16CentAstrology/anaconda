@@ -19,21 +19,27 @@
 DESCRIPTION = "Anaconda is the installation program used by Fedora, " \
               "Red Hat Enterprise Linux and some other distributions."
 
+import fcntl
 import itertools
 import os
-import sys
-import fcntl
-import termios
 import struct
-
-from argparse import ArgumentParser, ArgumentError, HelpFormatter, Namespace, Action, SUPPRESS
+import sys
+import termios
+from argparse import (
+    SUPPRESS,
+    Action,
+    ArgumentError,
+    ArgumentParser,
+    HelpFormatter,
+    Namespace,
+)
 
 from blivet.arch import is_s390
 
-from pyanaconda.core.kernel import KernelArguments
-from pyanaconda.core.constants import DisplayModes, X_TIMEOUT, VIRTIO_PORT
-
 from pyanaconda.anaconda_loggers import get_module_logger
+from pyanaconda.core.constants import VIRTIO_PORT, X_TIMEOUT, DisplayModes
+from pyanaconda.core.kernel import KernelArguments
+
 log = get_module_logger(__name__)
 
 # Help text formatting constants
@@ -93,10 +99,17 @@ class AnacondaArgumentParser(ArgumentParser):
             True: ignore the argument without the prefix. (default)
         """
         help_width = get_help_width()
-        self._boot_arg = dict()
-        self.removed_no_inst_bootargs = []
+        self._boot_arg = {}
         self.bootarg_prefix = kwargs.pop("bootarg_prefix", "")
         self.require_prefix = kwargs.pop("require_prefix", True)
+
+        # List of boot options which are correct with and without the inst. prefix
+        # Please add here options which are processed by us but also by someone
+        # else during the boot.
+        # NOTE: Adding this to add_argument() directly could be problematic because just specific
+        # long option variants could be allowed from multiple, so it would have to be list which
+        # somehow kills the benefit.
+        self._require_prefix_ignore_list = ["proxy"]
         ArgumentParser.__init__(self, description=DESCRIPTION,
                                 formatter_class=lambda prog: HelpFormatter(
                                     prog, max_help_position=LEFT_PADDING, width=help_width),
@@ -130,6 +143,7 @@ class AnacondaArgumentParser(ArgumentParser):
                         "conflicting bootopt string: %s" % b, option)
                 else:
                     self._boot_arg[b] = option
+
         return option
 
     def _get_bootarg_option(self, arg):
@@ -148,9 +162,6 @@ class AnacondaArgumentParser(ArgumentParser):
             arg = arg[len(self.bootarg_prefix):]
 
         option = self._boot_arg.get(arg)
-
-        if option and self.bootarg_prefix and not prefixed_option:
-            self.removed_no_inst_bootargs.append(arg)
 
         # From Fedora 34 this prefix is required. However, leave the code here for some time to
         # tell users that we are ignoring the old variants.
@@ -190,7 +201,6 @@ class AnacondaArgumentParser(ArgumentParser):
         else:
             bootargs = boot_cmdline
 
-        self.removed_no_inst_bootargs = []
         # go over all options corresponding to current boot cmdline
         # and do any modifications necessary
         # NOTE: program cmdline overrides boot cmdline
@@ -221,7 +231,7 @@ class AnacondaArgumentParser(ArgumentParser):
                 # we hate you.
 
                 continue
-            elif type(val) is list:
+            elif isinstance(val, list):
                 for item in val:
                     option(self, namespace, item)
                 continue
@@ -303,14 +313,17 @@ def name_path_pairs(image_specs):
             name = os.path.splitext(os.path.basename(path))[0]
 
         if name in names_seen:
-            names = ("%s_%d" % (name, n) for n in itertools.count())
-            name = next(itertools.dropwhile(lambda n: n in names_seen, names))
+            for n in itertools.count():
+                candidate = "%s_%d" % (name, n)
+                if candidate not in names_seen:
+                    name = candidate
+                    break
         names_seen.append(name)
 
         yield name, path
 
 
-class HelpTextParser(object):
+class HelpTextParser:
     """Class to parse help text from file and make it available to option
        parser.
     """
@@ -401,7 +414,7 @@ def getArgumentParser(version_string, boot_cmdline=None):
     ap.add_argument('--version', action='version', version="%(prog)s " + version_string)
 
     class SetCmdlineMode(Action):
-        def __call__(self, parser, namespace, values, option_string=None):
+        def __call__(self, parser, namespace, values, _option_string=None):
             # We need to save both display mode to TEXT and set noninteractive flag
             setattr(namespace, "display_mode", DisplayModes.TUI)
             setattr(namespace, "noninteractive", True)
@@ -424,7 +437,7 @@ def getArgumentParser(version_string, boot_cmdline=None):
     ap.add_argument("--proxy", metavar='PROXY_URL', help=help_parser.help_text("proxy"))
 
     class SetWaitfornet(Action):
-        def __call__(self, parser, namespace, values, option_string=None):
+        def __call__(self, parser, namespace, values, _option_string=None):
             value = None
             try:
                 ivalue = int(values)
@@ -456,16 +469,13 @@ def getArgumentParser(version_string, boot_cmdline=None):
                     help="This option is deprecated.")
     ap.add_argument("--multilib", dest="multiLib", action="store_true", default=False,
                     help=help_parser.help_text("multilib"))
-
-    ap.add_argument("-m", "--method", dest="method", default=None, metavar="METHOD",
-                    help=help_parser.help_text("method"))
     ap.add_argument("--repo", dest="method", default=None, metavar="REPO_URL",
                     help=help_parser.help_text("repo"))
     ap.add_argument("--stage2", dest="stage2", default=None, metavar="STAGE2_URL",
                     help=help_parser.help_text("stage2"))
 
     class ParseAddRepo(Action):
-        def __call__(self, parser, namespace, values, option_string=None):
+        def __call__(self, parser, namespace, values, _option_string=None):
             try:
                 name, rest = values.split(',', maxsplit=1)
             except ValueError:
@@ -488,17 +498,14 @@ def getArgumentParser(version_string, boot_cmdline=None):
     # Display
     ap.add_argument("--resolution", dest="runres", default=None, metavar="WIDTHxHEIGHT",
                     help=help_parser.help_text("resolution"))
-    ap.add_argument("--usefbx", dest="xdriver", action="store_const", const="fbdev",
-                    help=help_parser.help_text("usefbx"))
-    ap.add_argument("--vnc", action="store_true", default=False,
-                    help=help_parser.help_text("vnc"))
-    ap.add_argument("--vncconnect", metavar="HOST:PORT", help=help_parser.help_text("vncconnect"))
-    ap.add_argument("--vncpassword", default="", metavar="PASSWORD",
-                    help=help_parser.help_text("vncpassword"))
-    ap.add_argument("--xdriver", dest="xdriver", action="store", type=str,
-                    default=None, metavar="DRIVER", help=help_parser.help_text("xdriver"))
     ap.add_argument("--xtimeout", dest="xtimeout", action="store", type=int, default=X_TIMEOUT,
                     metavar="TIMEOUT_IN_SECONDS", help=help_parser.help_text("xtimeout"))
+    ap.add_argument("--rdp", action="store_true", default=False, dest="rdp_enabled",
+                    help=help_parser.help_text("rdp"))
+    ap.add_argument("--rdp.username", default="", metavar="USERNAME", dest="rdp_username",
+                    help=help_parser.help_text("rdp.username"))
+    ap.add_argument("--rdp.password", default="", metavar="PASSWORD", dest="rdp_password",
+                    help=help_parser.help_text("rdp.password"))
 
     # Language
     ap.add_argument("--keymap", metavar="KEYMAP", help=help_parser.help_text("keymap"))
@@ -511,6 +518,7 @@ def getArgumentParser(version_string, boot_cmdline=None):
                     help=help_parser.help_text("virtiolog"))
 
     from pykickstart.constants import SELINUX_DISABLED, SELINUX_ENFORCING
+
     from pyanaconda.core.constants import SELINUX_DEFAULT
     ap.add_argument("--noselinux", dest="selinux", action="store_const",
                     const=SELINUX_DISABLED, default=SELINUX_DEFAULT,
@@ -519,7 +527,7 @@ def getArgumentParser(version_string, boot_cmdline=None):
     # Use a custom action to convert --selinux=0 and --selinux=1 into the
     # appropriate constants
     class ParseSelinux(Action):
-        def __call__(self, parser, namespace, values, option_string=None):
+        def __call__(self, parser, namespace, values, _option_string=None):
             if values == "0":
                 setattr(namespace, self.dest, SELINUX_DISABLED)
             else:
@@ -527,8 +535,6 @@ def getArgumentParser(version_string, boot_cmdline=None):
 
     ap.add_argument("--selinux", action=ParseSelinux, nargs="?", help=help_parser.help_text("selinux"))
 
-    ap.add_argument("--nompath", dest="mpath", action="store_false", default=True,
-                    help=help_parser.help_text("nompath"))
     ap.add_argument("--mpath", action="store_true", help=help_parser.help_text("mpath"))
 
     ap.add_argument("--disklabel", default=SUPPRESS, help=help_parser.help_text("disklabel"))
@@ -549,7 +555,7 @@ def getArgumentParser(version_string, boot_cmdline=None):
     # Kickstart and log saving
     # - use a custom action to convert the values of the nosave option into appropriate flags
     class ParseNosave(Action):
-        def __call__(self, parser, namespace, values, option_string=None):
+        def __call__(self, parser, namespace, values, _option_string=None):
             options = []
             if values:
                 options = values.split(",")

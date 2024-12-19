@@ -15,22 +15,31 @@
 # License and may only be used or replicated with the express permission of
 # Red Hat, Inc.
 #
-import tempfile
 import os
-import pytest
-
+import tempfile
 import unittest
-from unittest.mock import patch, call, MagicMock
+from unittest.mock import MagicMock, call, patch
 
+import pytest
 from gi.repository import OSTree
-from pyanaconda.core.glib import Variant, GError
+
+from pyanaconda.core.glib import GError, Variant
 from pyanaconda.modules.common.errors.installation import PayloadInstallationError
-from pyanaconda.modules.common.structures.rpm_ostree import \
-    RPMOSTreeConfigurationData, RPMOSTreeContainerConfigurationData
-from pyanaconda.modules.payloads.payload.rpm_ostree.installation import \
-    PrepareOSTreeMountTargetsTask, CopyBootloaderDataTask, InitOSTreeFsAndRepoTask, \
-    ChangeOSTreeRemoteTask, ConfigureBootloader, DeployOSTreeTask, PullRemoteAndDeleteTask, \
-    SetSystemRootTask, TearDownOSTreeMountTargetsTask
+from pyanaconda.modules.common.structures.rpm_ostree import (
+    RPMOSTreeConfigurationData,
+    RPMOSTreeContainerConfigurationData,
+)
+from pyanaconda.modules.payloads.payload.rpm_ostree.installation import (
+    ChangeOSTreeRemoteTask,
+    ConfigureBootloader,
+    CopyBootloaderDataTask,
+    DeployOSTreeTask,
+    InitOSTreeFsAndRepoTask,
+    PrepareOSTreeMountTargetsTask,
+    PullRemoteAndDeleteTask,
+    SetSystemRootTask,
+    TearDownOSTreeMountTargetsTask,
+)
 
 
 def _make_config_data():
@@ -678,17 +687,22 @@ class ConfigureBootloaderTaskTestCase(unittest.TestCase):
     @patch("pyanaconda.modules.payloads.payload.rpm_ostree.installation.execWithRedirect")
     @patch("pyanaconda.modules.payloads.payload.rpm_ostree.installation.os.rename")
     @patch("pyanaconda.modules.payloads.payload.rpm_ostree.installation.os.symlink")
+    @patch("pyanaconda.modules.payloads.payload.rpm_ostree.installation.LOCALIZATION")
     @patch("pyanaconda.modules.payloads.payload.rpm_ostree.installation.STORAGE")
     @patch("pyanaconda.modules.payloads.payload.rpm_ostree.installation.DeviceData")
-    def test_btrfs_run(self, devdata_mock, storage_mock, symlink_mock, rename_mock, exec_mock):
+    def test_btrfs_run(self, devdata_mock, storage_mock, localization_mock,
+                       symlink_mock, rename_mock, exec_mock):
         """Test OSTree bootloader config task, no BTRFS"""
         exec_mock.return_value = 0
 
-        proxy_mock = storage_mock.get_proxy()
-        proxy_mock.GetArguments.return_value = ["BOOTLOADER-ARGS"]
-        proxy_mock.GetFstabSpec.return_value = "FSTAB-SPEC"
-        proxy_mock.GetRootDevice.return_value = "device-name"
+        storage_proxy_mock = storage_mock.get_proxy()
+        storage_proxy_mock.GetArguments.return_value = ["BOOTLOADER-ARGS"]
+        storage_proxy_mock.GetFstabSpec.return_value = "FSTAB-SPEC"
+        storage_proxy_mock.GetRootDevice.return_value = "device-id"
+        localization_proxy_mock = localization_mock.get_proxy()
+        localization_proxy_mock.VirtualConsoleKeymap = "cs"
         devdata_mock.from_structure.return_value.type = "btrfs subvolume"
+        devdata_mock.from_structure.return_value.name = "device-name"
 
         with tempfile.TemporaryDirectory() as sysroot:
             os.makedirs(sysroot + "/boot/grub2")
@@ -707,25 +721,37 @@ class ConfigureBootloaderTaskTestCase(unittest.TestCase):
             )
             exec_mock.assert_called_once_with(
                 "ostree",
-                ["admin", "instutil", "set-kargs", "BOOTLOADER-ARGS", "root=FSTAB-SPEC",
-                 "rootflags=subvol=device-name", "rw"],
+                ["admin",
+                 "instutil",
+                 "set-kargs",
+                 "BOOTLOADER-ARGS",
+                 "root=FSTAB-SPEC",
+                 "vconsole.keymap=cs",
+                 "rootflags=subvol=device-name",
+                 "rw"
+                 ],
                 root=sysroot
             )
 
     @patch("pyanaconda.modules.payloads.payload.rpm_ostree.installation.execWithRedirect")
     @patch("pyanaconda.modules.payloads.payload.rpm_ostree.installation.os.rename")
     @patch("pyanaconda.modules.payloads.payload.rpm_ostree.installation.os.symlink")
+    @patch("pyanaconda.modules.payloads.payload.rpm_ostree.installation.LOCALIZATION")
     @patch("pyanaconda.modules.payloads.payload.rpm_ostree.installation.STORAGE")
     @patch("pyanaconda.modules.payloads.payload.rpm_ostree.installation.DeviceData")
-    def test_nonbtrfs_run(self, devdata_mock, storage_mock, symlink_mock, rename_mock, exec_mock):
+    def test_nonbtrfs_run(self, devdata_mock, storage_mock, localization_mock,
+                          symlink_mock, rename_mock, exec_mock):
         """Test OSTree bootloader config task, no BTRFS"""
         exec_mock.return_value = 0
 
-        proxy_mock = storage_mock.get_proxy()
-        proxy_mock.GetArguments.return_value = ["BOOTLOADER-ARGS"]
-        proxy_mock.GetFstabSpec.return_value = "FSTAB-SPEC"
-        proxy_mock.GetRootDevice.return_value = "device-name"
+        storage_proxy_mock = storage_mock.get_proxy()
+        storage_proxy_mock.GetArguments.return_value = ["BOOTLOADER-ARGS"]
+        storage_proxy_mock.GetFstabSpec.return_value = "FSTAB-SPEC"
+        storage_proxy_mock.GetRootDevice.return_value = "device-id"
+        localization_proxy_mock = localization_mock.get_proxy()
+        localization_proxy_mock.VirtualConsoleKeymap = "cs"
         devdata_mock.from_structure.return_value.type = "something-non-btrfs-subvolume-ish"
+        devdata_mock.from_structure.return_value.name = "device-name"
 
         with tempfile.TemporaryDirectory() as sysroot:
             os.makedirs(sysroot + "/boot/grub2")
@@ -744,9 +770,122 @@ class ConfigureBootloaderTaskTestCase(unittest.TestCase):
             )
             exec_mock.assert_called_once_with(
                 "ostree",
-                ["admin", "instutil", "set-kargs", "BOOTLOADER-ARGS", "root=FSTAB-SPEC", "rw"],
+                ["admin",
+                 "instutil",
+                 "set-kargs",
+                 "BOOTLOADER-ARGS",
+                 "root=FSTAB-SPEC",
+                 "vconsole.keymap=cs",
+                 "rw"
+                 ],
                 root=sysroot
             )
+
+    @patch("pyanaconda.modules.payloads.payload.rpm_ostree.installation.have_bootupd")
+    @patch("pyanaconda.modules.payloads.payload.rpm_ostree.installation.execWithRedirect")
+    @patch("pyanaconda.modules.payloads.payload.rpm_ostree.installation.os.rename")
+    @patch("pyanaconda.modules.payloads.payload.rpm_ostree.installation.os.symlink")
+    @patch("pyanaconda.modules.payloads.payload.rpm_ostree.installation.LOCALIZATION")
+    @patch("pyanaconda.modules.payloads.payload.rpm_ostree.installation.STORAGE")
+    @patch("pyanaconda.modules.payloads.payload.rpm_ostree.installation.DeviceData")
+    def test_bootupd_run(self, devdata_mock, storage_mock, localization_mock, symlink_mock,
+                         rename_mock, exec_mock, have_bootupd_mock):
+        """Test OSTree bootloader config task, bootupd"""
+        exec_mock.return_value = 0
+        have_bootupd_mock.return_value = True
+
+        storage_proxy_mock = storage_mock.get_proxy()
+        storage_proxy_mock.GetArguments.return_value = ["BOOTLOADER-ARGS"]
+        storage_proxy_mock.GetFstabSpec.return_value = "FSTAB-SPEC"
+        storage_proxy_mock.GetRootDevice.return_value = "device-id"
+        storage_proxy_mock.Drive = "btldr-drv"
+        storage_proxy_mock.KeepBootOrder = False
+        localization_proxy_mock = localization_mock.get_proxy()
+        localization_proxy_mock.VirtualConsoleKeymap = "cs"
+        devdata_mock.from_structure.return_value.type = "something-non-btrfs-subvolume-ish"
+        devdata_mock.from_structure.return_value.path = "/dev/btldr-drv"
+        devdata_mock.from_structure.return_value.name = "device-name"
+
+        with tempfile.TemporaryDirectory() as sysroot:
+            task = ConfigureBootloader(sysroot)
+            task.run()
+
+            rename_mock.assert_not_called()
+            symlink_mock.assert_not_called()
+            assert exec_mock.call_count == 2
+            exec_mock.assert_has_calls([
+                call(
+                    "bootupctl",
+                    ["backend", "install", "--auto", "--write-uuid", "--update-firmware",
+                     "--device", "/dev/btldr-drv", "/"],
+                    root=sysroot
+                ),
+                call(
+                    "ostree",
+                    ["admin",
+                     "instutil",
+                     "set-kargs",
+                     "BOOTLOADER-ARGS",
+                     "root=FSTAB-SPEC",
+                     "vconsole.keymap=cs",
+                     "rw"
+                     ],
+                    root=sysroot
+                )
+            ])
+
+    @patch("pyanaconda.modules.payloads.payload.rpm_ostree.installation.have_bootupd")
+    @patch("pyanaconda.modules.payloads.payload.rpm_ostree.installation.execWithRedirect")
+    @patch("pyanaconda.modules.payloads.payload.rpm_ostree.installation.os.rename")
+    @patch("pyanaconda.modules.payloads.payload.rpm_ostree.installation.os.symlink")
+    @patch("pyanaconda.modules.payloads.payload.rpm_ostree.installation.LOCALIZATION")
+    @patch("pyanaconda.modules.payloads.payload.rpm_ostree.installation.STORAGE")
+    @patch("pyanaconda.modules.payloads.payload.rpm_ostree.installation.DeviceData")
+    def test_bootupd_run_with_leavebootorder(self, devdata_mock, storage_mock, localization_mock,
+                                             symlink_mock, rename_mock, exec_mock,
+                                             have_bootupd_mock):
+        """Test OSTree bootloader config task, bootupd"""
+        exec_mock.return_value = 0
+        have_bootupd_mock.return_value = True
+
+        storage_proxy_mock = storage_mock.get_proxy()
+        storage_proxy_mock.GetArguments.return_value = ["BOOTLOADER-ARGS"]
+        storage_proxy_mock.GetFstabSpec.return_value = "FSTAB-SPEC"
+        storage_proxy_mock.GetRootDevice.return_value = "device-name"
+        storage_proxy_mock.Drive = "btldr-drv"
+        storage_proxy_mock.KeepBootOrder = True
+        localization_proxy_mock = localization_mock.get_proxy()
+        localization_proxy_mock.VirtualConsoleKeymap = "cs"
+        devdata_mock.from_structure.return_value.type = "something-non-btrfs-subvolume-ish"
+        devdata_mock.from_structure.return_value.path = "/dev/btldr-drv"
+
+        with tempfile.TemporaryDirectory() as sysroot:
+            task = ConfigureBootloader(sysroot)
+            task.run()
+
+            rename_mock.assert_not_called()
+            symlink_mock.assert_not_called()
+            assert exec_mock.call_count == 2
+            exec_mock.assert_has_calls([
+                call(
+                    "bootupctl",
+                    ["backend", "install", "--auto", "--write-uuid",
+                     "--device", "/dev/btldr-drv", "/"],
+                    root=sysroot
+                ),
+                call(
+                    "ostree",
+                    ["admin",
+                     "instutil",
+                     "set-kargs",
+                     "BOOTLOADER-ARGS",
+                     "root=FSTAB-SPEC",
+                     "vconsole.keymap=cs",
+                     "rw"
+                     ],
+                    root=sysroot
+                )
+            ])
 
     @patch("pyanaconda.modules.payloads.payload.rpm_ostree.installation.execWithRedirect")
     @patch("pyanaconda.modules.payloads.payload.rpm_ostree.installation.os.rename")
@@ -890,7 +1029,7 @@ class PullRemoteAndDeleteTaskTestCase(unittest.TestCase):
         repo_mock = MagicMock()
         sysroot_mock.get_repo.return_value = [None, repo_mock]
 
-        with patch.object(PullRemoteAndDeleteTask, "report_progress") as progress_mock:
+        with patch.object(PullRemoteAndDeleteTask, "report_progress"):
             task = PullRemoteAndDeleteTask(data=data)
             task.run()
 
@@ -902,7 +1041,7 @@ class PullRemoteAndDeleteTaskTestCase(unittest.TestCase):
         repo_mock.pull_with_options.assert_called_once()
         name, args, kwargs = repo_mock.pull_with_options.mock_calls[0]
         opts = args[1]
-        assert type(opts) == Variant
+        assert type(opts) is Variant
         assert opts.unpack() == {"refs": ["ref"], "flags": OSTree.RepoPullFlags.UNTRUSTED}
         repo_mock.remote_delete.assert_called_once_with("remote", None)
 
@@ -918,7 +1057,7 @@ class PullRemoteAndDeleteTaskTestCase(unittest.TestCase):
         sysroot_mock.get_repo.return_value = [None, repo_mock]
         repo_mock.pull_with_options.side_effect = [GError("blah")]
 
-        with patch.object(PullRemoteAndDeleteTask, "report_progress") as progress_mock:
+        with patch.object(PullRemoteAndDeleteTask, "report_progress"):
             with pytest.raises(PayloadInstallationError):
                 task = PullRemoteAndDeleteTask(data=data)
                 task.run()
@@ -931,7 +1070,7 @@ class PullRemoteAndDeleteTaskTestCase(unittest.TestCase):
         repo_mock.pull_with_options.assert_called_once()
         name, args, kwargs = repo_mock.pull_with_options.mock_calls[0]
         opts = args[1]
-        assert type(opts) == Variant
+        assert type(opts) is Variant
         assert opts.unpack() == {"refs": ["ref"], "flags": OSTree.RepoPullFlags.UNTRUSTED}
         repo_mock.remote_delete.assert_not_called()
 

@@ -18,29 +18,39 @@
 #  Author(s):  Vendula Poncova <vponcova@redhat.com>
 #
 import os
-import warnings
 
 from pyanaconda.anaconda_loggers import get_module_logger
+from pyanaconda.core.configuration.base import (
+    Configuration,
+    ConfigurationError,
+    Section,
+)
 from pyanaconda.core.configuration.bootloader import BootloaderSection, BootloaderType
 from pyanaconda.core.configuration.license import LicenseSection
+from pyanaconda.core.configuration.localization import LocalizationSection
 from pyanaconda.core.configuration.network import NetworkSection
 from pyanaconda.core.configuration.payload import PayloadSection
+from pyanaconda.core.configuration.profile import ProfileLoader
 from pyanaconda.core.configuration.security import SecuritySection
 from pyanaconda.core.configuration.storage import StorageSection
 from pyanaconda.core.configuration.storage_constraints import StorageConstraints
-from pyanaconda.core.configuration.system import SystemType, SystemSection
-from pyanaconda.core.configuration.target import TargetType, TargetSection
-from pyanaconda.core.configuration.base import Section, Configuration, ConfigurationError
-from pyanaconda.core.configuration.profile import ProfileLoader
-from pyanaconda.core.configuration.ui import UserInterfaceSection
+from pyanaconda.core.configuration.system import SystemSection, SystemType
+from pyanaconda.core.configuration.target import TargetSection, TargetType
 from pyanaconda.core.configuration.timezone import TimezoneSection
-from pyanaconda.core.constants import ANACONDA_CONFIG_TMP, ANACONDA_CONFIG_DIR, \
-    GEOLOC_PROVIDER_FEDORA_GEOIP, GEOLOC_PROVIDER_HOSTIP, GEOLOC_DEFAULT_PROVIDER, \
-    GEOLOC_URL_FEDORA_GEOIP, GEOLOC_URL_HOSTIP
+from pyanaconda.core.configuration.ui import UserInterfaceSection
+from pyanaconda.core.constants import (
+    ANACONDA_CONFIG_DIR,
+    ANACONDA_CONFIG_TMP,
+    GEOLOC_DEFAULT_PROVIDER,
+    GEOLOC_PROVIDER_FEDORA_GEOIP,
+    GEOLOC_PROVIDER_HOSTIP,
+    GEOLOC_URL_FEDORA_GEOIP,
+    GEOLOC_URL_HOSTIP,
+)
 
 log = get_module_logger(__name__)
 
-__all__ = ["conf", "AnacondaConfiguration"]
+__all__ = ["AnacondaConfiguration", "conf"]
 
 
 class AnacondaSection(Section):
@@ -62,27 +72,7 @@ class AnacondaSection(Section):
 
         :return: a list of patterns
         """
-        return self._get_deprecated_activatable_modules() \
-            or self._get_option("activatable_modules").split()
-
-    def _get_deprecated_activatable_modules(self):
-        """Get a list of deprecated activatable modules.
-
-        FIXME: This is a temporary workaround.
-
-        If the kickstart_modules option is defined in the configuration,
-        allow to activate only the specified modules and Anaconda addons.
-        """
-        if not self._has_option("kickstart_modules"):
-            return []
-
-        warnings.warn(
-            "The kickstart_modules configuration option is deprecated and "
-            "will be removed in in the future.", DeprecationWarning
-        )
-
-        return self._get_option("kickstart_modules").split() \
-            + ["org.fedoraproject.Anaconda.Addons.*"]
+        return self._get_option("activatable_modules").split()
 
     @property
     def forbidden_modules(self):
@@ -95,29 +85,7 @@ class AnacondaSection(Section):
 
         :return: a list of patterns
         """
-        return self._get_deprecated_forbidden_modules() \
-            + self._get_option("forbidden_modules").split()
-
-    def _get_deprecated_forbidden_modules(self):
-        """Get a list of deprecated forbidden modules.
-
-        FIXME: This is a temporary workaround.
-
-        If the addons_enabled option is defined in the configuration
-        and set to False, don't allow to activate Anaconda addons.
-        """
-        if not self._has_option("addons_enabled"):
-            return []
-
-        warnings.warn(
-            "The addons_enabled configuration option is deprecated and "
-            "will be removed in in the future.", DeprecationWarning
-        )
-
-        if self._get_option("addons_enabled", bool):
-            return []
-
-        return ["org.fedoraproject.Anaconda.Addons.*"]
+        return self._get_option("forbidden_modules").split()
 
     @property
     def optional_modules(self):
@@ -188,6 +156,10 @@ class AnacondaConfiguration(Configuration):
             "Timezone", self.get_parser()
         )
 
+        self._localization = LocalizationSection(
+            "Localization", self.get_parser()
+        )
+
     @property
     def anaconda(self):
         """The Anaconda section."""
@@ -247,6 +219,11 @@ class AnacondaConfiguration(Configuration):
     def timezone(self):
         """The Timezone section."""
         return self._timezone
+
+    @property
+    def localization(self):
+        """The Localization section."""
+        return self._localization
 
     def set_from_defaults(self):
         """Set the configuration from the default configuration files.

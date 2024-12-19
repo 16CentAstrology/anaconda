@@ -15,10 +15,10 @@
 # You should have received a copy of the GNU Lesser General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-SUBDIRS = common boss timezone network localization security users payloads storage services subscription
+SUBDIRS = common boss timezone network localization security users payloads storage services subscription runtime
 
 pkgpyexecdir = $(pyexecdir)/py$(PACKAGE_NAME)
 modulesdir = $(pkgpyexecdir)/modules
-modules_PYTHON = $(srcdir)/*.py
+dist_modules_DATA = $(wildcard $(srcdir)/*.py)
 
 MAINTAINERCLEANFILES = Makefile.in

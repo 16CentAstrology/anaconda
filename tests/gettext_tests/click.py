@@ -15,7 +15,9 @@
 # You should have received a copy of the GNU Lesser General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-import os, re, sys
+import os
+import re
+import sys
 
 # Something like looks more or less like an <a> tag
 link_re = re.compile(r'<\s*a(\s|>)')
@@ -47,7 +49,7 @@ pofile = polib.pofile(os.environ['top_builddir'] + "/po/anaconda.pot")
 msgs = {e.msgid: e for e in pofile}
 
 success = True
-for msg in msgs.keys():
+for msg, data in msgs.items():
     if msg in ignore_msgs:
         continue
 
@@ -59,7 +61,7 @@ for msg in msgs.keys():
         # Look for something to click
         if not link_re.search(trimmed_msg):
             print("String at %s appears to be clickable but has nothing to click." %
-                    " ".join("%s:%s" % (o[0], o[1]) for o in msgs[msg].occurrences))
+                  " ".join("%s:%s" % (o[0], o[1]) for o in data.occurrences))
             success = False
 
 sys.exit(0 if success else 1)

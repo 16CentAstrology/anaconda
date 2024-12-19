@@ -1,10 +1,8 @@
 
+import glob
 import os
 import subprocess
-import glob
-
 from unittest import TestCase
-
 
 RPM_BUILD_DIR_ENV = "RPM_PATH"
 ROOT_DIR_ENV = "ROOT_ANACONDA_PATH"
@@ -33,6 +31,7 @@ class RPMTestCase(TestCase):
         """Call external command and return result."""
         print("Running command \"{}\"".format(" ".join(cmd)))
         # pylint: disable=subprocess-run-check
+        # ruff: noqa: PLW1510
         return subprocess.run(cmd, stdout=subprocess.PIPE, cwd=cwd)
 
     @property

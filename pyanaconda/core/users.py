@@ -17,23 +17,34 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 
-# Used for ascii_letters and digits constants
 import os
 import os.path
+import re
 import subprocess
 from pathlib import Path
+from random import SystemRandom as sr
 
 from pyanaconda.core import util
 from pyanaconda.core.configuration.anaconda import conf
-from pyanaconda.core.path import make_directories, open_with_perm
-from pyanaconda.core.string import strip_accents
-from pyanaconda.core.regexes import GROUPLIST_FANCY_PARSE, NAME_VALID, PORTABLE_FS_CHARS, GROUPLIST_SIMPLE_VALID
-import crypt  # pylint: disable=deprecated-module
 from pyanaconda.core.i18n import _
-import re
-from random import SystemRandom as sr
+from pyanaconda.core.path import make_directories, open_with_perm
+from pyanaconda.core.regexes import (
+    GROUPLIST_FANCY_PARSE,
+    GROUPLIST_SIMPLE_VALID,
+    NAME_VALID,
+    PORTABLE_FS_CHARS,
+)
+from pyanaconda.core.string import strip_accents
+
+try:
+    # Use the standalone (not deprecated) package when available
+    import crypt_r
+except ImportError:
+    # Fallback to the deprecated standard library module
+    import crypt as crypt_r  # pylint: disable=deprecated-module
 
 from pyanaconda.anaconda_loggers import get_module_logger
+
 log = get_module_logger(__name__)
 
 
@@ -53,17 +64,17 @@ def crypt_password(password):
 
     # and try to compute the password hash using our yescrypt setting
     try:
-        cryptpw = crypt.crypt(password, setting)
+        cryptpw = crypt_r.crypt(password, setting)
 
     # Fallback to sha512crypt, if yescrypt is not supported
     except OSError:
         log.info("yescrypt is not supported, falling back to sha512crypt")
         try:
-            cryptpw = crypt.crypt(password, crypt.METHOD_SHA512)
+            cryptpw = crypt_r.crypt(password, crypt_r.METHOD_SHA512)
         except OSError as exc:
             raise RuntimeError(_(
                 "Unable to encrypt password: unsupported "
-                "algorithm {}").format(crypt.METHOD_SHA512)
+                "algorithm {}").format(crypt_r.METHOD_SHA512)
             ) from exc
 
     return cryptpw
@@ -78,7 +89,26 @@ def check_username(name):
     """
 
     # Check reserved names.
-    if name in os.listdir("/") + ["root", "home", "daemon", "system"]:
+    reserved_names = [
+        # passwd contents from setup.rpm
+        "root",
+        "bin",
+        "daemon",
+        "adm",
+        "lp",
+        "sync",
+        "shutdown",
+        "halt",
+        "mail",
+        "operator",
+        "games",
+        "ftp",
+        "nobody",
+        # from older version of the function
+        "home",
+        "system",
+    ]
+    if name in os.listdir("/") + reserved_names:
         return False, _("User name is reserved for system: %s") % name
 
     return is_valid_name(name)
@@ -380,16 +410,16 @@ def create_user(username, password=False, is_crypted=False, lock=False,
 
     # If any requested groups do not exist, create them.
     group_list = []
-    for group_name, gid in group_gids:
+    for group_name, group_id in group_gids:
         existing_group = _getgrnam(group_name, root)
 
         # Check for a bad GID request
-        if gid and existing_group and gid != existing_group[2]:
-            raise ValueError("Group %s already exists with GID %s" % (group_name, gid))
+        if group_id and existing_group and group_id != existing_group[2]:
+            raise ValueError("Group %s already exists with GID %s" % (group_name, group_id))
 
         # Otherwise, create the group if it does not already exist
         if not existing_group:
-            create_group(group_name, gid=gid, root=root)
+            create_group(group_name, gid=group_id, root=root)
         group_list.append(group_name)
 
     if group_list:

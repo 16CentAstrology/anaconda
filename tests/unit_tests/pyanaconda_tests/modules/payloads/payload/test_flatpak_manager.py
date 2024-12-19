@@ -15,14 +15,16 @@
 # License and may only be used or replicated with the express permission of
 # Red Hat, Inc.
 #
-import unittest
 import os
+import unittest
+from tempfile import TemporaryDirectory
+from unittest.mock import Mock, call, patch
+
 import gi
 
-from tempfile import TemporaryDirectory
-from unittest.mock import patch, Mock, call
-
-from pyanaconda.modules.payloads.payload.rpm_ostree.flatpak_manager import FlatpakManager
+from pyanaconda.modules.payloads.payload.rpm_ostree.flatpak_manager import (
+    FlatpakManager,
+)
 
 gi.require_version("Flatpak", "1.0")
 from gi.repository.Flatpak import TransactionOperationType
@@ -254,7 +256,7 @@ class FlatpakTest(unittest.TestCase):
             flatpak._operation_stopped_callback(
                 transaction=Mock(),
                 operation=OperationMock("app/org.test"),
-                commit=Mock(),
+                _commit=Mock(),
                 result=Mock(),
             )
 
@@ -349,15 +351,15 @@ class FlatpakTest(unittest.TestCase):
         flatpak.replace_installed_refs_remote("cylon_officer")
 
         # test that every file is read and written
-        open_mock.has_calls([
+        open_mock.assert_has_calls([
             call("/path/app/org.test/x86_64/stable/active/deploy", "rb"),
             call("/path/app/org.test/x86_64/stable/active/deploy", "wb"),
             call("/path/runtime/org.run/x86_64/stable/active/deploy", "rb"),
             call("/path/runtime/org.run/x86_64/stable/active/deploy", "wb"),
-        ])
+        ], any_order=True)
 
 
-class OperationMock(object):
+class OperationMock:
     """Mock of the Flatpak.TransactionOperation class."""
 
     def __init__(self, ref="app/org.test/x86_64", op=TransactionOperationType.INSTALL):
@@ -371,7 +373,7 @@ class OperationMock(object):
         return self._op
 
 
-class RefMock(object):
+class RefMock:
     """Mock of the Flatpak.InstalledRef class."""
 
     def __init__(self, ref="app/org.test/x86_64", installed_size=0):

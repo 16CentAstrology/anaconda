@@ -18,14 +18,15 @@
 # Red Hat, Inc.
 #
 
-import os
 import glob
+import os
 from functools import wraps
 
+from pyanaconda.anaconda_loggers import get_module_logger
 from pyanaconda.core import util
 from pyanaconda.core.configuration.anaconda import conf
+from pyanaconda.core.regexes import IBFT_CONFIGURED_DEVICE_NAME
 
-from pyanaconda.anaconda_loggers import get_module_logger
 log = get_module_logger(__name__)
 
 
@@ -34,8 +35,6 @@ log = get_module_logger(__name__)
 def get_s390_settings(devname):
     cfg = {
         'SUBCHANNELS': '',
-        'NETTYPE': '',
-        'OPTIONS': ''
     }
 
     subchannels = []
@@ -44,23 +43,6 @@ def get_s390_settings(devname):
     if not subchannels:
         return cfg
     cfg['SUBCHANNELS'] = ','.join(subchannels)
-
-    # Example of the ccw.conf file content:
-    # qeth,0.0.0900,0.0.0901,0.0.0902,layer2=0,portname=FOOBAR,portno=0
-    #
-    # SUBCHANNELS="0.0.0900,0.0.0901,0.0.0902"
-    # NETTYPE="qeth"
-    # OPTIONS="layer2=1 portname=FOOBAR portno=0"
-    if not os.path.exists('/run/install/ccw.conf'):
-        return cfg
-    with open('/run/install/ccw.conf') as f:
-        # pylint: disable=redefined-outer-name
-        for line in f:
-            if cfg['SUBCHANNELS'] in line:
-                items = line.strip().split(',')
-                cfg['NETTYPE'] = items[0]
-                cfg['OPTIONS'] = " ".join(i for i in items[1:] if '=' in i)
-                break
 
     return cfg
 
@@ -125,3 +107,11 @@ def guard_by_system_configuration(return_value):
                 return function(*args, **kwargs)
         return wrapped
     return wrap
+
+
+def is_ibft_configured_device(iface):
+    return IBFT_CONFIGURED_DEVICE_NAME.match(iface)
+
+
+def is_nbft_device(iface):
+    return iface.startswith("nbft")

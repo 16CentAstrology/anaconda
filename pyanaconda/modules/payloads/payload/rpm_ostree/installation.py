@@ -16,27 +16,31 @@
 # Red Hat, Inc.
 #
 import os
-import blivet.util
-
 from subprocess import CalledProcessError
+
+import blivet.util
+import gi
 
 from pyanaconda.anaconda_loggers import get_module_logger
 from pyanaconda.core.configuration.anaconda import conf
-from pyanaconda.core.glib import format_size_full, create_new_context, Variant, GError
+from pyanaconda.core.glib import GError, Variant, create_new_context, format_size_full
 from pyanaconda.core.i18n import _
-from pyanaconda.core.path import set_system_root, make_directories
+from pyanaconda.core.path import make_directories, set_system_root
 from pyanaconda.core.util import execWithRedirect
-from pyanaconda.modules.common.errors.installation import PayloadInstallationError
-from pyanaconda.modules.common.task import Task
-from pyanaconda.modules.common.constants.objects import DEVICE_TREE, BOOTLOADER
-from pyanaconda.modules.common.constants.services import STORAGE
+from pyanaconda.modules.common.constants.objects import BOOTLOADER, DEVICE_TREE
+from pyanaconda.modules.common.constants.services import LOCALIZATION, STORAGE
+from pyanaconda.modules.common.errors.installation import (
+    BootloaderInstallationError,
+    PayloadInstallationError,
+)
 from pyanaconda.modules.common.structures.storage import DeviceData
+from pyanaconda.modules.common.task import Task
+from pyanaconda.modules.payloads.payload.rpm_ostree.util import have_bootupd
 
-import gi
 gi.require_version("OSTree", "1.0")
 gi.require_version("Gio", "2.0")
 gi.require_version("RpmOstree", "1.0")
-from gi.repository import RpmOstree, OSTree, Gio
+from gi.repository import Gio, OSTree, RpmOstree
 
 log = get_module_logger(__name__)
 
@@ -158,6 +162,10 @@ class PrepareOSTreeMountTargetsTask(Task):
 
         # Canonicalize dest to the full path
         dest = self._sysroot + dest
+        # Resolve symlinks as bind mounting over symlinks does not
+        # seem to work on btrfs:
+        # https://bugzilla.redhat.com/show_bug.cgi?id=2262892
+        dest = os.path.realpath(dest)
 
         if bind_ro:
             safe_exec_with_redirect("mount", ["--bind", src, src])
@@ -365,7 +373,7 @@ class CopyBootloaderDataTask(Task):
             # actually EFI (simulating grub2-efi being installed).  Second, as it's a mount point
             # that's expected to already exist (so if we used copytree, we'd traceback). If it
             # doesn't, we're not on a UEFI system, so we don't want to copy the data.
-            if not fname == 'efi' or is_efi and os.path.isdir(os.path.join(physboot, fname)):
+            if not fname == 'efi' or (is_efi and os.path.isdir(os.path.join(physboot, fname))):
                 log.info("Copying bootloader data: %s", fname)
                 safe_exec_with_redirect('cp', ['-r', '-p', srcpath, physboot])
 
@@ -496,8 +504,43 @@ class ConfigureBootloader(Task):
         return "Configure OSTree bootloader"
 
     def run(self):
-        self._move_grub_config()
+        if have_bootupd(self._sysroot):
+            self._install_bootupd()
+        else:
+            self._move_grub_config()
         self._set_kargs()
+
+    def _install_bootupd(self):
+        bootloader = STORAGE.get_proxy(BOOTLOADER)
+        device_tree = STORAGE.get_proxy(DEVICE_TREE)
+        dev_data = DeviceData.from_structure(device_tree.GetDeviceData(bootloader.Drive))
+
+        bootupdctl_args = [
+                "--auto",
+                "--write-uuid",
+        ]
+
+        # do not insert UEFI entry if leavebootorder was requested
+        if not bootloader.KeepBootOrder:
+            log.debug("Adding --update-firmware to bootupdctl call")
+            bootupdctl_args.append("--update-firmware")
+
+        rc = execWithRedirect(
+            "bootupctl",
+            [
+                "backend",
+                "install",
+                *bootupdctl_args,
+                "--device",
+                dev_data.path,
+                "/",
+            ],
+            root=self._sysroot
+        )
+
+        if rc:
+            raise BootloaderInstallationError(
+                "failed to write boot loader configuration")
 
     def _move_grub_config(self):
         """If using GRUB2, move its config file, also with a compatibility symlink."""
@@ -522,18 +565,20 @@ class ConfigureBootloader(Task):
 
         bootloader = STORAGE.get_proxy(BOOTLOADER)
         device_tree = STORAGE.get_proxy(DEVICE_TREE)
+        localization = LOCALIZATION.get_proxy()
 
-        root_name = device_tree.GetRootDevice()
+        root_id = device_tree.GetRootDevice()
         root_data = DeviceData.from_structure(
-            device_tree.GetDeviceData(root_name)
+            device_tree.GetDeviceData(root_id)
         )
 
         set_kargs_args = ["admin", "instutil", "set-kargs"]
         set_kargs_args.extend(bootloader.GetArguments())
-        set_kargs_args.append("root=" + device_tree.GetFstabSpec(root_name))
+        set_kargs_args.append("root=" + device_tree.GetFstabSpec(root_id))
+        set_kargs_args.append("vconsole.keymap=" + localization.VirtualConsoleKeymap)
 
         if root_data.type == "btrfs subvolume":
-            set_kargs_args.append("rootflags=subvol=" + root_name)
+            set_kargs_args.append("rootflags=subvol=" + root_data.name)
 
         set_kargs_args.append("rw")
 

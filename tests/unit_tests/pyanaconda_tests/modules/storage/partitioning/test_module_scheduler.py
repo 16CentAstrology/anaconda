@@ -17,18 +17,33 @@
 #
 # Red Hat Author(s): Vendula Poncova <vponcova@redhat.com>
 #
-import unittest
-import pytest
 import copy
-from unittest.mock import patch, Mock
+import unittest
+from unittest.mock import Mock, patch
 
-from blivet.devicefactory import DEVICE_TYPE_LVM, SIZE_POLICY_AUTO, DEVICE_TYPE_PARTITION, \
-    DEVICE_TYPE_LVM_THINP, DEVICE_TYPE_DISK, DEVICE_TYPE_MD, DEVICE_TYPE_BTRFS
-from blivet.devices import StorageDevice, DiskDevice, PartitionDevice, LUKSDevice, \
-    BTRFSVolumeDevice, MDRaidArrayDevice, LVMVolumeGroupDevice, LVMLogicalVolumeDevice
+import pytest
+from blivet.devicefactory import (
+    DEVICE_TYPE_BTRFS,
+    DEVICE_TYPE_DISK,
+    DEVICE_TYPE_LVM,
+    DEVICE_TYPE_LVM_THINP,
+    DEVICE_TYPE_MD,
+    DEVICE_TYPE_PARTITION,
+    SIZE_POLICY_AUTO,
+)
+from blivet.devices import (
+    BTRFSVolumeDevice,
+    DiskDevice,
+    LUKSDevice,
+    LVMLogicalVolumeDevice,
+    LVMVolumeGroupDevice,
+    MDRaidArrayDevice,
+    PartitionDevice,
+    StorageDevice,
+)
 from blivet.errors import StorageError
 from blivet.formats import get_format
-from blivet.formats.fs import FS, BTRFS
+from blivet.formats.fs import BTRFS, FS
 from blivet.size import Size
 from dasbus.structure import compare_data
 from dasbus.typing import get_native
@@ -37,17 +52,23 @@ from pykickstart.constants import AUTOPART_TYPE_PLAIN
 from pyanaconda.modules.common.errors.configuration import StorageConfigurationError
 from pyanaconda.modules.common.structures.device_factory import DeviceFactoryRequest
 from pyanaconda.modules.common.structures.partitioning import PartitioningRequest
-from pyanaconda.modules.storage.partitioning.interactive.interactive_partitioning import \
-    InteractiveAutoPartitioningTask
-from pyanaconda.modules.storage.partitioning.interactive.scheduler_interface import \
-    DeviceTreeSchedulerInterface
-from pyanaconda.modules.storage.partitioning.interactive.scheduler_module import \
-    DeviceTreeSchedulerModule
-from pyanaconda.modules.storage.platform import EFI
 from pyanaconda.modules.storage.devicetree import create_storage
 from pyanaconda.modules.storage.devicetree.root import Root
-from tests.unit_tests.pyanaconda_tests import patch_dbus_publish_object, check_task_creation, \
-    patch_dbus_get_proxy
+from pyanaconda.modules.storage.partitioning.interactive.interactive_partitioning import (
+    InteractiveAutoPartitioningTask,
+)
+from pyanaconda.modules.storage.partitioning.interactive.scheduler_interface import (
+    DeviceTreeSchedulerInterface,
+)
+from pyanaconda.modules.storage.partitioning.interactive.scheduler_module import (
+    DeviceTreeSchedulerModule,
+)
+from pyanaconda.modules.storage.platform import EFI
+from tests.unit_tests.pyanaconda_tests import (
+    check_task_creation,
+    patch_dbus_get_proxy,
+    patch_dbus_publish_object,
+)
 
 
 class DeviceTreeSchedulerTestCase(unittest.TestCase):
@@ -169,7 +190,7 @@ class DeviceTreeSchedulerTestCase(unittest.TestCase):
     def test_get_supported_raid_levels(self):
         """Test GetSupportedRaidLevels."""
         assert self.interface.GetSupportedRaidLevels(DEVICE_TYPE_MD) == \
-            ['linear', 'raid0', 'raid1', 'raid10', 'raid4', 'raid5', 'raid6']
+            ['raid0', 'raid1', 'raid10', 'raid4', 'raid5', 'raid6']
 
     @patch('pyanaconda.modules.storage.partitioning.interactive.utils.get_format')
     @patch('pyanaconda.modules.storage.partitioning.interactive.utils.platform', new_callable=EFI)
@@ -355,7 +376,7 @@ class DeviceTreeSchedulerTestCase(unittest.TestCase):
         request.container_raid_level = "raid1"
         request.reset_container_data()
 
-        assert compare_data(request, default) == True
+        assert compare_data(request, default) is True
 
     def test_get_default_luks_version(self):
         """Test GetDefaultLUKSVersion."""
@@ -511,7 +532,7 @@ class DeviceTreeSchedulerTestCase(unittest.TestCase):
 
         # Make the btrfs format not mountable.
         with patch.object(BTRFS, "_mount_class", return_value=Mock(available=False)):
-            request = self.interface.GenerateDeviceFactoryRequest(dev2.name)
+            request = self.interface.GenerateDeviceFactoryRequest(dev2.device_id)
             permissions = self.interface.GenerateDeviceFactoryPermissions(request)
 
         assert get_native(permissions) == {
@@ -653,16 +674,16 @@ class DeviceTreeSchedulerTestCase(unittest.TestCase):
         """Test IsDeviceLocked."""
         dev1 = StorageDevice(
             "dev1",
-            fmt=get_format("ext4"),
+            fmt=get_format("luks"),
             size=Size("10 GiB")
         )
         dev2 = LUKSDevice(
             "dev2",
             parents=[dev1],
-            fmt=get_format("luks"),
+            fmt=get_format("ext4"),
             size=Size("10 GiB"),
         )
-        dev3 = LUKSDevice(
+        dev3 = StorageDevice(
             "dev3",
             parents=[dev1],
             fmt=get_format("luks", exists=True),
@@ -673,9 +694,9 @@ class DeviceTreeSchedulerTestCase(unittest.TestCase):
         self._add_device(dev2)
         self._add_device(dev3)
 
-        assert self.interface.IsDeviceLocked("dev1") is False
-        assert self.interface.IsDeviceLocked("dev2") is False
-        assert self.interface.IsDeviceLocked("dev3") is True
+        assert self.interface.IsDeviceLocked(dev1.device_id) is False
+        assert self.interface.IsDeviceLocked(dev2.device_id) is False
+        assert self.interface.IsDeviceLocked(dev3.device_id) is True
 
     def test_check_completeness(self):
         """Test CheckCompleteness."""
@@ -704,21 +725,21 @@ class DeviceTreeSchedulerTestCase(unittest.TestCase):
         self._add_device(dev3)
 
         self._check_report(
-            self.interface.CheckCompleteness("dev1")
+            self.interface.CheckCompleteness(dev1.device_id)
         )
         self._check_report(
-            self.interface.CheckCompleteness("dev2"),
+            self.interface.CheckCompleteness(dev2.device_id),
             "This Software RAID array is missing 2 of 2 member partitions. "
             "You can remove it or select a different device."
         )
         self._check_report(
-            self.interface.CheckCompleteness("dev3"),
+            self.interface.CheckCompleteness(dev3.device_id),
             "This LVM Volume Group is missing 2 of 2 physical volumes. "
             "You can remove it or select a different device."
         )
         dev1.complete = False
         self._check_report(
-            self.interface.CheckCompleteness("dev1"),
+            self.interface.CheckCompleteness(dev1.device_id),
             "This blivet device is missing member devices. "
             "You can remove it or select a different device."
         )
@@ -739,8 +760,8 @@ class DeviceTreeSchedulerTestCase(unittest.TestCase):
         self._add_device(dev1)
         self._add_device(dev2)
 
-        assert self.interface.IsDeviceEditable("dev1") is False
-        assert self.interface.IsDeviceEditable("dev2") is True
+        assert self.interface.IsDeviceEditable(dev1.device_id) is False
+        assert self.interface.IsDeviceEditable(dev2.device_id) is True
 
     def test_collect_containers(self):
         """Test CollectContainers."""
@@ -757,7 +778,7 @@ class DeviceTreeSchedulerTestCase(unittest.TestCase):
         self._add_device(dev1)
         self._add_device(dev2)
 
-        assert self.interface.CollectContainers(DEVICE_TYPE_BTRFS) == [dev2.name]
+        assert self.interface.CollectContainers(DEVICE_TYPE_BTRFS) == [dev2.device_id]
         assert self.interface.CollectContainers(DEVICE_TYPE_LVM) == []
 
     def test_get_container_free_space(self):
@@ -775,10 +796,10 @@ class DeviceTreeSchedulerTestCase(unittest.TestCase):
         self._add_device(dev1)
         self._add_device(dev2)
 
-        free_space = self.interface.GetContainerFreeSpace("dev1")
+        free_space = self.interface.GetContainerFreeSpace(dev1.device_id)
         assert free_space == 0
 
-        free_space = self.interface.GetContainerFreeSpace("dev2")
+        free_space = self.interface.GetContainerFreeSpace(dev2.device_id)
         assert free_space > Size("9 GiB").get_bytes()
         assert free_space < Size("10 GiB").get_bytes()
 
@@ -836,7 +857,7 @@ class DeviceTreeSchedulerTestCase(unittest.TestCase):
         self._add_device(lv)
 
         request = DeviceFactoryRequest()
-        request.device_spec = lv.name
+        request.device_spec = lv.device_id
 
         request.device_type = DEVICE_TYPE_LVM
         request = DeviceFactoryRequest.from_structure(
@@ -845,7 +866,7 @@ class DeviceTreeSchedulerTestCase(unittest.TestCase):
             )
         )
 
-        assert request.container_spec == "testvg"
+        assert request.container_spec == "LVM-testvg"
         assert request.container_name == "testvg"
         assert request.container_encrypted is False
         assert request.container_raid_level == ""
@@ -930,7 +951,7 @@ class DeviceTreeSchedulerTestCase(unittest.TestCase):
             )
         )
 
-        assert request.container_spec == "testvg"
+        assert request.container_spec == "LVM-testvg"
         assert request.container_name == "testvg"
         assert request.container_encrypted is False
         assert request.container_raid_level == ""

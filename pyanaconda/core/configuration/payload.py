@@ -18,7 +18,7 @@
 #  Author(s):  Vendula Poncova <vponcova@redhat.com>
 #
 from pyanaconda.core.configuration.base import Section
-from pyanaconda.core.constants import SOURCE_TYPE_CLOSEST_MIRROR, SOURCE_TYPE_CDN
+from pyanaconda.core.constants import SOURCE_TYPE_CDN, SOURCE_TYPE_CLOSEST_MIRROR
 
 
 class PayloadSection(Section):
@@ -104,6 +104,28 @@ class PayloadSection(Section):
             raise ValueError("Invalid value: {}".format(value))
 
         return value
+
+    @property
+    def flatpak_remote(self):
+        """Default remote source after deployment of local Flatpaks from the ISO.
+
+        Only one value can be set.
+        Supported format:
+            remote-name  remote-flatpak-repository
+
+        :return: a tuple with (name, URL)
+        """
+        return self._get_option("flatpak_remote", self._convert_flatpak_remote)
+
+    @classmethod
+    def _convert_flatpak_remote(cls, value):
+        """Convert flatpak remote from string to tuple."""
+        value = value.split()
+        if len(value) != 2:
+            raise ValueError("Flatpak remote needs to be in format 'name URL': {}".format(value))
+
+        return tuple(value)
+
 
     @property
     def verify_ssl(self):

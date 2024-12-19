@@ -20,9 +20,12 @@
 from enum import Enum
 
 from blivet.size import Size
-
-from pykickstart.constants import AUTOPART_TYPE_PLAIN, AUTOPART_TYPE_BTRFS, AUTOPART_TYPE_LVM, \
-    AUTOPART_TYPE_LVM_THINP
+from pykickstart.constants import (
+    AUTOPART_TYPE_BTRFS,
+    AUTOPART_TYPE_LVM,
+    AUTOPART_TYPE_LVM_THINP,
+    AUTOPART_TYPE_PLAIN,
+)
 
 from pyanaconda.core.configuration.base import Section
 from pyanaconda.core.configuration.utils import split_name_and_attributes
@@ -63,6 +66,14 @@ class StorageSection(Section):
         during the installation.
         """
         return self._get_option("multipath_friendly_names", bool)
+
+    @property
+    def gpt_discoverable_partitions(self):
+        """Use GPT discoverable partition type IDs, if possible.
+
+        Tell Blivet to do this.
+        """
+        return self._get_option("gpt_discoverable_partitions", bool)
 
     @property
     def allow_imperfect_devices(self):

@@ -19,25 +19,35 @@
 #
 import langtable
 
+from pyanaconda.anaconda_loggers import get_module_logger
 from pyanaconda.core.configuration.anaconda import conf
 from pyanaconda.core.dbus import DBus
 from pyanaconda.core.signal import Signal
-from pyanaconda.localization import get_available_translations, get_common_languages, \
-    get_english_name, get_language_locales, get_language_id, get_native_name
+from pyanaconda.localization import (
+    get_available_translations,
+    get_common_languages,
+    get_english_name,
+    get_language_id,
+    get_language_locales,
+    get_native_name,
+)
 from pyanaconda.modules.common.base import KickstartService
 from pyanaconda.modules.common.constants.services import LOCALIZATION
 from pyanaconda.modules.common.containers import TaskContainer
-from pyanaconda.modules.common.structures.requirement import Requirement
 from pyanaconda.modules.common.structures.language import LanguageData, LocaleData
-from pyanaconda.modules.localization.localization_interface import LocalizationInterface
+from pyanaconda.modules.localization.installation import (
+    KeyboardInstallationTask,
+    LanguageInstallationTask,
+)
 from pyanaconda.modules.localization.kickstart import LocalizationKickstartSpecification
-from pyanaconda.modules.localization.installation import LanguageInstallationTask, \
-    KeyboardInstallationTask
-from pyanaconda.modules.localization.runtime import GetMissingKeyboardConfigurationTask, \
-    ApplyKeyboardTask, AssignGenericKeyboardSettingTask
 from pyanaconda.modules.localization.localed import LocaledWrapper
+from pyanaconda.modules.localization.localization_interface import LocalizationInterface
+from pyanaconda.modules.localization.runtime import (
+    ApplyKeyboardTask,
+    AssignGenericKeyboardSettingTask,
+    GetMissingKeyboardConfigurationTask,
+)
 
-from pyanaconda.anaconda_loggers import get_module_logger
 log = get_module_logger(__name__)
 
 
@@ -66,6 +76,9 @@ class LocalizationService(KickstartService):
 
         self.keyboard_seen_changed = Signal()
         self._keyboard_seen = False
+
+        self.compositor_selected_layout_changed = Signal()
+        self.compositor_layouts_changed = Signal()
 
         self._localed_wrapper = None
 
@@ -245,23 +258,14 @@ class LocalizationService(KickstartService):
     def localed_wrapper(self):
         if not self._localed_wrapper:
             self._localed_wrapper = LocaledWrapper()
+
+            self._localed_wrapper.compositor_selected_layout_changed.connect(
+                self.compositor_selected_layout_changed.emit
+            )
+            self._localed_wrapper.compositor_layouts_changed.connect(
+                self.compositor_layouts_changed.emit
+            )
         return self._localed_wrapper
-
-    def collect_requirements(self):
-        """Return installation requirements for this module.
-
-        :return: a list of requirements
-        """
-        requirements = []
-
-        # Install support for non-ascii keyboard layouts (#1919483).
-        if self.vc_keymap and not langtable.supports_ascii(self.vc_keymap):
-            requirements.append(Requirement.for_package(
-                package_name="kbd-legacy",
-                reason="Required to support the '{}' keymap.".format(self.vc_keymap)
-            ))
-
-        return requirements
 
     def install_with_tasks(self):
         """Return the installation tasks of this module.
@@ -332,3 +336,18 @@ class LocalizationService(KickstartService):
         )
         result = task.run()
         self._update_settings_from_task(result)
+
+    def get_compositor_selected_layout(self):
+        return self.localed_wrapper.current_layout_variant
+
+    def set_compositor_selected_layout(self, layout_variant):
+        return self.localed_wrapper.set_current_layout(layout_variant)
+
+    def select_next_compositor_layout(self):
+        return self.localed_wrapper.select_next_layout()
+
+    def get_compositor_layouts(self):
+        return self.localed_wrapper.layouts_variants
+
+    def set_compositor_layouts(self, layout_variants, options):
+        self.localed_wrapper.set_layouts(layout_variants, options)

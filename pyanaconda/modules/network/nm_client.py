@@ -19,24 +19,38 @@
 #
 
 import gi
+
 gi.require_version("NM", "1.0")
-from gi.repository import NM
+import socket
 from contextlib import contextmanager
 
-import socket
 from blivet.arch import is_s390
+from gi.repository import NM
 from pykickstart.constants import BIND_TO_MAC
-from pyanaconda.core.glib import create_new_context, GError, sync_call_glib
-from pyanaconda.modules.network.constants import NM_CONNECTION_UUID_LENGTH, \
-    CONNECTION_ADDING_TIMEOUT, NM_CONNECTION_TYPE_WIFI, NM_CONNECTION_TYPE_ETHERNET, \
-    NM_CONNECTION_TYPE_VLAN, NM_CONNECTION_TYPE_BOND,  NM_CONNECTION_TYPE_TEAM, \
-    NM_CONNECTION_TYPE_BRIDGE, NM_CONNECTION_TYPE_INFINIBAND
-from pyanaconda.modules.network.kickstart import default_ks_vlan_interface_name
-from pyanaconda.modules.network.utils import get_s390_settings, netmask2prefix, prefix2netmask
-from pyanaconda.modules.network.config_file import is_config_file_for_system
-from pyanaconda.core.dbus import SystemBus
 
 from pyanaconda.anaconda_loggers import get_module_logger
+from pyanaconda.core import util
+from pyanaconda.core.dbus import SystemBus
+from pyanaconda.core.glib import GError, create_new_context, sync_call_glib
+from pyanaconda.modules.network.config_file import is_config_file_for_system
+from pyanaconda.modules.network.constants import (
+    CONNECTION_ADDING_TIMEOUT,
+    NM_CONNECTION_TYPE_BOND,
+    NM_CONNECTION_TYPE_BRIDGE,
+    NM_CONNECTION_TYPE_ETHERNET,
+    NM_CONNECTION_TYPE_INFINIBAND,
+    NM_CONNECTION_TYPE_TEAM,
+    NM_CONNECTION_TYPE_VLAN,
+    NM_CONNECTION_TYPE_WIFI,
+    NM_CONNECTION_UUID_LENGTH,
+)
+from pyanaconda.modules.network.kickstart import default_ks_vlan_interface_name
+from pyanaconda.modules.network.utils import (
+    get_s390_settings,
+    netmask2prefix,
+    prefix2netmask,
+)
+
 log = get_module_logger(__name__)
 
 
@@ -437,12 +451,6 @@ def _update_wired_connection_with_s390_settings(connection, s390cfg):
     if s390cfg['SUBCHANNELS']:
         subchannels = s390cfg['SUBCHANNELS'].split(",")
         s_wired.props.s390_subchannels = subchannels
-    if s390cfg['NETTYPE']:
-        s_wired.props.s390_nettype = s390cfg['NETTYPE']
-    if s390cfg['OPTIONS']:
-        opts = s390cfg['OPTIONS'].split(" ")
-        opts_dict = {k: v for k, v in (o.split("=") for o in opts)}
-        s_wired.props.s390_options = opts_dict
 
 
 def _create_new_connection(network_data, device_name):
@@ -573,9 +581,9 @@ def add_connection_from_ksdata(nm_client, network_data, device_name, activate=Fa
         ifname_option_values
     )
 
-    for connection, device_name in connections:
+    for connection, dev_name in connections:
         log.debug("add connection (activate=%s): %s for %s\n%s",
-                  activate, connection.get_uuid(), device_name,
+                  activate, connection.get_uuid(), dev_name,
                   connection.to_dbus(NM.ConnectionSerializationFlags.NO_SECRETS))
         added_connection = add_connection_sync(
             nm_client,
@@ -586,13 +594,13 @@ def add_connection_from_ksdata(nm_client, network_data, device_name, activate=Fa
             continue
 
         if activate:
-            if device_name:
-                device = nm_client.get_device_by_iface(device_name)
+            if dev_name:
+                device = nm_client.get_device_by_iface(dev_name)
                 if device:
                     log.debug("activating with device %s", device.get_iface())
                 else:
                     log.debug("activating without device specified - device %s not found",
-                              device_name)
+                              dev_name)
             else:
                 device = None
                 log.debug("activating without device specified")
@@ -796,6 +804,9 @@ def update_connection_ip_settings_from_ksdata(connection, network_data):
             s_ip4.props.gateway = network_data.gateway
     if network_data.nodefroute:
         s_ip4.props.never_default = True
+    if network_data.dhcpclass:
+        s_ip4.set_property(NM.SETTING_IP4_CONFIG_DHCP_VENDOR_CLASS_IDENTIFIER,
+                           network_data.dhcpclass)
     connection.add_setting(s_ip4)
 
     # ipv6 settings
@@ -1376,15 +1387,10 @@ def _get_dracut_znet_argument_from_connection(connection):
     argument = ""
     wired_setting = connection.get_setting_wired()
     if wired_setting and is_s390():
-        nettype = wired_setting.get_s390_nettype()
-        # get_s390_subchannels() returns a list of subchannels
-        subchannels = wired_setting.get_s390_subchannels()
-        if nettype and subchannels:
-            argument = "rd.znet={},{}".format(nettype, ",".join(subchannels))
-            options = wired_setting.get_property(NM.SETTING_WIRED_S390_OPTIONS)
-            if options:
-                options_string = ','.join("{}={}".format(key, val) for key, val in options.items())
-                argument += ",{}".format(options_string)
+        devspec = util.execWithCapture("/lib/s390-tools/zdev-to-rd.znet",
+                                       ["persistent",
+                                        connection.get_interface_name()]).strip()
+        argument = "rd.znet={}".format(devspec)
     return argument
 
 
@@ -1403,9 +1409,9 @@ def get_ports_from_connections(nm_client, port_types, controller_specs):
     """
     ports = set()
     for con in nm_client.get_connections():
-        if not con.get_setting_connection().get_slave_type() in port_types:
+        if con.get_setting_connection().get_port_type() not in port_types:
             continue
-        if con.get_setting_connection().get_master() in controller_specs:
+        if con.get_setting_connection().get_controller() in controller_specs:
             iface = get_iface_from_connection(nm_client, con.get_uuid())
             name = con.get_id()
             ports.add((name, iface, con.get_uuid()))
@@ -1438,7 +1444,7 @@ def get_config_file_connection_of_device(nm_client, device_name, device_hwaddr=N
         if con_type == NM_CONNECTION_TYPE_ETHERNET:
 
             # Ignore ports
-            if con.get_setting_connection().get_master():
+            if con.get_setting_connection().get_controller():
                 continue
 
             interface_name = con.get_interface_name()
@@ -1499,7 +1505,7 @@ def get_kickstart_network_data(connection, nm_client, network_data_class):
     """
     # no network command for non-virtual device ports
     if connection.get_connection_type() not in (NM_CONNECTION_TYPE_BOND, NM_CONNECTION_TYPE_TEAM):
-        if connection.get_setting_connection().get_master():
+        if connection.get_setting_connection().get_controller():
             return None
 
     # no support for wireless
@@ -1606,6 +1612,10 @@ def _update_ip4_config_kickstart_network_data(connection, network_data):
     ip4_dns_search = ",".join(ip4_domains)
     if ip4_dns_search:
         network_data.ipv4_dns_search = ip4_dns_search
+
+    ip4_dhcpclass = s_ip4_config.get_dhcp_vendor_class_identifier()
+    if ip4_dhcpclass:
+        network_data.dhcpclass = ip4_dhcpclass
 
 
 def _update_ip6_config_kickstart_network_data(connection, network_data):
@@ -1745,3 +1755,7 @@ def _update_team_kickstart_network_data(nm_client, iface, connection, network_da
         teamconfig = s_team.get_config()
         if teamconfig:
             network_data.teamconfig = teamconfig.replace("\n", "").replace(" ", "")
+
+
+def is_bootif_connection(con):
+    return con.get_id().startswith("BOOTIF Connection")

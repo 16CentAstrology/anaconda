@@ -2,7 +2,6 @@
 <!-- Generated with glade 3.36.0 -->
 <interface>
   <requires lib="gtk+" version="3.12"/>
-  <requires lib="TimezoneMap" version="0.4"/>
   <object class="GtkListStore" id="serversStore">
     <columns>
       <!-- column-name hostname -->
@@ -24,6 +23,9 @@
     <property name="border_width">6</property>
     <property name="type_hint">dialog</property>
     <property name="decorated">False</property>
+    <child type="titlebar">
+      <object class="GtkDrawingArea"/>
+    </child>
     <child internal-child="vbox">
       <object class="GtkBox" id="dialog-vbox1">
         <property name="can_focus">False</property>

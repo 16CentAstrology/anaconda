@@ -17,38 +17,70 @@
 # License and may only be used or replicated with the express permission of
 # Red Hat, Inc.
 #
+import os
+import pkgutil
 import sys
 import time
-import os
+
 from blivet.arch import is_s390
 from blivet.util import total_memory
-from dasbus.typing import get_variant, Int
+from dasbus.typing import Int, get_variant
 
-from pyanaconda import product, ntp
-from pyanaconda import anaconda_logging
-from pyanaconda import network
-from pyanaconda import kickstart
-from pyanaconda.anaconda_loggers import get_stdout_logger, get_module_logger
-from pyanaconda.core.util import persistent_root_image, ipmi_report, setenv, \
-    get_anaconda_version_string
-from pyanaconda.core.hw import minimal_memory_needed
+from pyanaconda import anaconda_logging, kickstart, network, ntp
+from pyanaconda.anaconda_loggers import get_module_logger, get_stdout_logger
 from pyanaconda.core.configuration.anaconda import conf
-from pyanaconda.core.constants import TEXT_ONLY_TARGET, SETUP_ON_BOOT_DEFAULT, \
-    SETUP_ON_BOOT_ENABLED, DRACUT_ERRORS_PATH, IPMI_ABORTED, STORAGE_MIN_RAM, SELINUX_DEFAULT, \
-    THREAD_TIME_INIT, DisplayModes, GEOLOC_CONNECTION_TIMEOUT
+from pyanaconda.core.constants import (
+    DRACUT_ERRORS_PATH,
+    GEOLOC_CONNECTION_TIMEOUT,
+    IPMI_ABORTED,
+    SELINUX_DEFAULT,
+    SETUP_ON_BOOT_DEFAULT,
+    SETUP_ON_BOOT_ENABLED,
+    STORAGE_MIN_RAM,
+    TEXT_ONLY_TARGET,
+    THREAD_TIME_INIT,
+    TIMEZONE_PRIORITY_GEOLOCATION,
+    DisplayModes,
+)
+from pyanaconda.core.hw import minimal_memory_needed
 from pyanaconda.core.i18n import _
 from pyanaconda.core.payload import ProxyString, ProxyStringError
+from pyanaconda.core.product import (
+    get_product_is_final_release,
+    get_product_name,
+    get_product_version,
+)
 from pyanaconda.core.service import start_service
-from pyanaconda.flags import flags
-from pyanaconda.localization import get_territory_locales, setup_locale, locale_has_translation
-from pyanaconda.screensaver import inhibit_screensaver
-from pyanaconda.modules.common.task import wait_for_task
-from pyanaconda.modules.common.structures.timezone import TimeSourceData, GeolocationData
-from pyanaconda.modules.common.constants.objects import STORAGE_CHECKER
-from pyanaconda.modules.common.constants.services import TIMEZONE, LOCALIZATION, SERVICES, \
-    SECURITY, STORAGE
-from pyanaconda.modules.common.util import is_module_available
 from pyanaconda.core.threads import thread_manager
+from pyanaconda.core.util import (
+    get_anaconda_version_string,
+    ipmi_report,
+    persistent_root_image,
+    setenv,
+)
+from pyanaconda.flags import flags
+from pyanaconda.localization import (
+    get_territory_locales,
+    locale_has_translation,
+    setup_locale,
+)
+from pyanaconda.modules.common.constants.objects import STORAGE_CHECKER
+from pyanaconda.modules.common.constants.services import (
+    LOCALIZATION,
+    RUNTIME,
+    SECURITY,
+    SERVICES,
+    STORAGE,
+    TIMEZONE,
+)
+from pyanaconda.modules.common.structures.logging import LoggingData
+from pyanaconda.modules.common.structures.timezone import (
+    GeolocationData,
+    TimeSourceData,
+)
+from pyanaconda.modules.common.task import wait_for_task
+from pyanaconda.modules.common.util import is_module_available
+from pyanaconda.screensaver import inhibit_screensaver
 
 stdout_log = get_stdout_logger()
 log = get_module_logger(__name__)
@@ -115,7 +147,7 @@ def check_memory(anaconda, options, display_mode=None):
         log.warning("CHECK_MEMORY DISABLED")
         return
 
-    reason_args = {"product_name": product.productName,
+    reason_args = {"product_name": get_product_name(),
                    "needed_ram": needed_ram,
                    "total_ram": total_ram}
     if needed_ram > total_ram:
@@ -134,7 +166,7 @@ def check_memory(anaconda, options, display_mode=None):
         sys.exit(1)
 
     # override display mode if machine cannot nicely run X
-    if display_mode != DisplayModes.TUI and not flags.usevnc:
+    if display_mode != DisplayModes.TUI and not flags.use_rd:
         needed_ram = minimal_memory_needed(with_gui=True, with_squashfs=with_squashfs)
         log.info("check_memory(): total:%s, graphical:%s", total_ram, needed_ram)
         reason_args["needed_ram"] = needed_ram
@@ -172,6 +204,22 @@ def set_storage_checker_minimal_ram_size(display_mode):
     )
 
 
+def fallback_to_tui_if_gtk_ui_is_not_available(anaconda):
+    """Check if GTK UI is available in this environment and fallback to TUI if not.
+
+    Also take into account Web UI.
+    """
+    if anaconda.gui_mode and not anaconda.is_webui_supported:
+        import pyanaconda.ui
+
+        mods = (tup[1] for tup in pkgutil.iter_modules(pyanaconda.ui.__path__, "pyanaconda.ui."))
+        if "pyanaconda.ui.gui" not in mods:
+            stdout_log.warning("Graphical user interface not available, falling back to text mode")
+            anaconda.display_mode = DisplayModes.TUI
+            flags.use_rd = False
+            flags.rd_question = False
+
+
 def setup_logging_from_options(options):
     """Configure logging according to Anaconda command line/boot options.
 
@@ -190,13 +238,13 @@ def setup_logging_from_options(options):
             log.error("Could not setup remotelog with %s", options.remotelog)
 
 
-def setup_logging_from_kickstart(data):
+def setup_logging_from_kickstart():
     """Configure logging according to the kickstart.
-
-    :param data: kickstart data
     """
-    host = data.logging.host
-    port = data.logging.port
+    runtime_proxy = RUNTIME.get_proxy()
+    logging_data = LoggingData.from_structure(runtime_proxy.Logging)
+    host = logging_data.host
+    port = logging_data.port
 
     if anaconda_logging.logger.remote_syslog is None and len(host) > 0:
         # not set from the command line, ok to use kickstart
@@ -252,7 +300,7 @@ def prompt_for_ssh(options):
     if options.ksfile:
         return False
 
-    if options.vnc:
+    if options.rdp_enabled:
         return False
 
     # Do some work here to get the ip addr / hostname to pass
@@ -321,16 +369,16 @@ def print_startup_note(options):
     :param options: command line/boot options
     """
     verdesc = "%s for %s %s" % (get_anaconda_version_string(build_time_version=True),
-                                product.productName, product.productVersion)
+                                get_product_name(), get_product_version())
     logs_note = " * installation log files are stored in /tmp during the installation"
     shell_and_tmux_note = " * shell is available on TTY2"
     shell_only_note = " * shell is available on TTY2 and in second TMUX pane (ctrl+b, then press 2)"
     tmux_only_note = " * shell is available in second TMUX pane (ctrl+b, then press 2)"
     text_mode_note = " * if the graphical installation interface fails to start, try again with the\n"\
-                     "   inst.text bootoption to start text installation"
+                     "   inst.text boot option to start text installation"
     separate_attachements_note = " * when reporting a bug add logs from /tmp as separate text/plain attachments"
 
-    if product.isFinal:
+    if get_product_is_final_release():
         print("anaconda %s started." % verdesc)
     else:
         print("anaconda %s (pre-release) started." % verdesc)
@@ -353,11 +401,8 @@ def print_startup_note(options):
         print(separate_attachements_note)
 
 
-def live_startup(anaconda):
-    """Live environment startup tasks.
-
-    :param anaconda: instance of the Anaconda class
-    """
+def live_startup():
+    """Live environment startup tasks."""
     inhibit_screensaver()
 
 
@@ -400,27 +445,27 @@ def find_kickstart(options):
     return None
 
 
-def run_pre_scripts(ks):
+def run_pre_scripts(ks_path):
     """Run %pre scripts.
 
-    :param ks: a path to a kickstart file or None
+    :param ks_path: a path to a kickstart file or None
     """
-    if ks is not None:
-        kickstart.preScriptPass(ks)
+    if ks_path is not None:
+        kickstart.preScriptPass(ks_path)
 
 
-def parse_kickstart(ks, strict_mode=False):
+def parse_kickstart(ks_path, strict_mode=False):
     """Parse the given kickstart file.
 
-    :param ks: a path to a kickstart file or None
+    :param ks_path: a path to a kickstart file or None
     :param strict_mode: process warnings as errors if True
     :returns: kickstart parsed to a data model
     """
     ksdata = kickstart.AnacondaKSHandler()
 
-    if ks is not None:
-        log.info("Parsing kickstart: %s", ks)
-        kickstart.parseKickstart(ksdata, ks, strict_mode=strict_mode, pass_to_boss=True)
+    if ks_path is not None:
+        log.info("Parsing kickstart: %s", ks_path)
+        kickstart.parseKickstart(ksdata, ks_path, strict_mode=strict_mode)
 
     return ksdata
 
@@ -525,14 +570,13 @@ def initialize_locale(opts, text_mode):
     localization.setup_locale(os.environ["LANG"], localization_proxy, text_mode=text_mode)
 
 
-def reinitialize_locale(opts, text_mode):
+def reinitialize_locale(text_mode):
     """Reinitialize locale.
 
     We need to reinitialize the locale if GUI startup failed.
     The text mode might not be able to display the characters
     from our current locale.
 
-    :param opts: the command line/boot options
     :param text_mode: is the locale being set up for the text mode?
     """
     from pyanaconda import localization
@@ -553,7 +597,7 @@ def initialize_default_systemd_target(text_mode):
 
     NOTE:
 
-        Installation controlled via VNC is considered to be
+        Installation controlled via RDP is considered to be
         a text mode installation, as the installation run itself
         is effectively headless.
 
@@ -564,8 +608,9 @@ def initialize_default_systemd_target(text_mode):
 
     services_proxy = SERVICES.get_proxy()
 
-    if not services_proxy.DefaultTarget and (text_mode or flags.usevnc):
-        log.debug("no default systemd target set & in text/vnc mode - setting multi-user.target.")
+    if not services_proxy.DefaultTarget and (text_mode or flags.use_rd):
+        log.debug("no default systemd target set & in text/remote desktop mode - "
+                  "setting multi-user.target.")
         services_proxy.DefaultTarget = TEXT_ONLY_TARGET
 
 
@@ -724,7 +769,10 @@ def apply_geolocation_result(display_mode):
         # (the geolocation module makes sure that the returned timezone is
         # either a valid timezone or empty string)
         log.info("Geoloc: using timezone determined by geolocation")
-        timezone_module.Timezone = geoloc_result.timezone
+        timezone_module.SetTimezoneWithPriority(
+            geoloc_result.timezone,
+            TIMEZONE_PRIORITY_GEOLOCATION
+        )
         # Either this is an interactive install and timezone.seen propagates
         # from the interactive default kickstart, or this is a kickstart
         # install where the user explicitly requested geolocation to be used.
@@ -732,6 +780,10 @@ def apply_geolocation_result(display_mode):
         # enter the Date & Time spoke to acknowledge the timezone detected
         # by geolocation before continuing the installation.
         timezone_module.Kickstarted = True
+
+    if not conf.localization.use_geolocation:
+        log.info("Geoloc: skipping locale because of use_geolocation configuration")
+        return
 
     # skip language setup if already set by boot options or kickstart
     language = localization_module.Language
@@ -742,7 +794,7 @@ def apply_geolocation_result(display_mode):
     territory = geoloc_result.territory
     locales = get_territory_locales(territory)
     try:
-        locale = next(l for l in locales if locale_has_translation(l))
+        locale = next(loc for loc in locales if locale_has_translation(loc))
     except StopIteration:
         log.info("Geoloc: detected languages are not translated, skipping locale")
         return

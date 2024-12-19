@@ -17,18 +17,20 @@
 # Red Hat, Inc.
 #
 import os
+
 from blivet.size import Size
+
+from pyanaconda.anaconda_loggers import get_module_logger
 from pyanaconda.core.configuration.anaconda import conf
 from pyanaconda.core.i18n import _
 from pyanaconda.modules.common.constants.objects import DEVICE_TREE
 from pyanaconda.modules.common.constants.services import STORAGE
 from pyanaconda.modules.common.structures.storage import DeviceData
 
-from pyanaconda.anaconda_loggers import get_module_logger
 log = get_module_logger(__name__)
 
 
-class FileSystemSpaceChecker(object):
+class FileSystemSpaceChecker:
     """This object provides for a way to verify that enough space is available
        on configured file systems to support the current software selections.
        It is run as part of completeness checking every time a spoke changes,
@@ -64,13 +66,13 @@ class FileSystemSpaceChecker(object):
         :param needed: a needed space
         :return: a deficit size or None
         """
-        root_name = self.device_tree.GetRootDevice()
+        root_id = self.device_tree.GetRootDevice()
 
-        if not root_name:
+        if not root_id:
             return None
 
         root_data = DeviceData.from_structure(
-            self.device_tree.GetDeviceData(root_name)
+            self.device_tree.GetDeviceData(root_id)
         )
 
         current = root_data.size

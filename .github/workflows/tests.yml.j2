@@ -11,11 +11,7 @@ concurrency:
 
 jobs:
   unit-tests:
-    {% if distro_name == "fedora" %}
-    runs-on: ubuntu-20.04
-    {% elif distro_name == "rhel" %}
-    runs-on: [self-hosted, kstest]
-    {% endif %}
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -28,9 +24,9 @@ jobs:
         # * This is still a matrix because we might re-enable ELN one day and then we will need
         #   a matrix here.
         #}
-        {% if distro_name == "fedora" and distro_release == "rawhide" %}
         release: ['']
         include:
+        {% if distro_name == "fedora" and distro_release == "rawhide" %}
           - release: ''
             target_branch: 'master'
             ci_tag: 'master'
@@ -40,14 +36,10 @@ jobs:
           #  ci_tag: 'eln'
           #  build-args: '--build-arg=image=quay.io/fedoraci/fedora:eln-x86_64'
         {% elif distro_name == "fedora" and distro_release is number %}
-        release: ['']
-        include:
           - release: ''
             target_branch: 'fedora-{$ distro_release $}'
             ci_tag: 'fedora-{$ distro_release $}'
         {% elif distro_name == "rhel" %}
-        release: ['']
-        include:
           - release: ''
             target_branch: 'rhel-{$ distro_release $}'
             ci_tag: 'rhel-{$ distro_release $}'
@@ -61,7 +53,7 @@ jobs:
 
     steps:
       - name: Clone repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           # TODO: Are we able to remove ref, fetch-depth and Rebase task? Seems that the checkout
           # without ref is doing the rebase for us.
@@ -76,11 +68,10 @@ jobs:
           git log --oneline -1 ${{ env.TARGET_BRANCH_NAME }}
           git rebase ${{ env.TARGET_BRANCH_NAME }}
 
-      {% if distro_name == "fedora" %}
       - name: Check if rebuild of the container image is required
         id: check-dockerfile-changed
         run: |
-          changes=$(git diff $TARGET_BRANCH_NAME..HEAD -- dockerfile/anaconda-ci/ anaconda.spec.in scripts/testing/install_dependencies.sh)
+          changes=$(git diff $TARGET_BRANCH_NAME..HEAD -- dockerfile/anaconda-ci/ anaconda.spec.in)
           # print for debugging
           echo "$changes"
           [ -z "$changes" ] || echo "changed=true" >> $GITHUB_OUTPUT
@@ -89,10 +80,6 @@ jobs:
       - name: Build anaconda-ci container
         if: steps.check-dockerfile-changed.outputs.changed
         run: make -f Makefile.am anaconda-ci-build
-      {% elif distro_name == "rhel" %}
-      - name: Build anaconda-ci container
-        run: make -f Makefile.am anaconda-ci-build
-      {% endif %}
 
       - name: Run tests in anaconda-ci container
         run: |
@@ -101,22 +88,18 @@ jobs:
 
       - name: Upload test and coverage logs
         if: always()
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: 'logs (${{ matrix.ci_tag }})'
           path: test-logs/*
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v3
+        uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
 
   rpm-tests:
-    {% if distro_name == "fedora" %}
-    runs-on: ubuntu-20.04
-    {% elif distro_name == "rhel" %}
-    runs-on: [self-hosted, kstest]
-    {% endif %}
+    runs-on: ubuntu-22.04
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -155,7 +138,7 @@ jobs:
 
     steps:
       - name: Clone repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           # TODO: Are we able to remove ref, fetch-depth and Rebase task? Seems that the checkout
           # without ref is doing the rebase for us.
@@ -170,7 +153,29 @@ jobs:
           git log --oneline -1 ${{ env.TARGET_BRANCH_NAME }}
           git rebase ${{ env.TARGET_BRANCH_NAME }}
 
+      - name: Check if container rebuild is needed
+        id: need_rebuild
+        run: |
+          changed_files=$(git diff --name-only ${{ env.TARGET_BRANCH_NAME }}..HEAD)
+          echo -e "Changed files: \n$changed_files\n"
+
+          . .structure-config
+
+          echo "Paths forcing the rebuild:"
+          rebuild="false"
+          for iter_f in $changed_files ; do
+                  for rebuild_f in "${RPM_REBUILD_PATHS[@]}"; do
+                          if [[ "$iter_f" =~ "$rebuild_f" ]]; then
+                                  echo "$iter_f"
+                                  rebuild="true"
+                                  break
+                          fi
+                  done
+          done
+          echo "rebuild=$rebuild" >> $GITHUB_OUTPUT
+
       - name: Build RPM test container
+        if: ${{ steps.need_rebuild.outputs.rebuild == 'true' }}
         run: make -f Makefile.am anaconda-rpm-build
 
       - name: Run RPM tests in container
@@ -178,7 +183,7 @@ jobs:
 
       - name: Upload test logs
         if: always()
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: 'logs-rpm-test (${{ matrix.ci_tag }})'
           path: test-logs/*

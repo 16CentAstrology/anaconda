@@ -20,14 +20,18 @@
 from pykickstart.base import KickstartHandler
 from pykickstart.parser import KickstartParser
 
+from pyanaconda.core.kickstart.addon import AddonRegistry, AddonSection
 from pyanaconda.core.kickstart.version import VERSION
-from pyanaconda.core.kickstart.addon import AddonSection, AddonRegistry
 
-__all__ = ["KickstartSpecification", "NoKickstartSpecification",
-           "KickstartSpecificationHandler", "KickstartSpecificationParser"]
+__all__ = [
+    "KickstartSpecification",
+    "KickstartSpecificationHandler",
+    "KickstartSpecificationParser",
+    "NoKickstartSpecification",
+]
 
 
-class KickstartSpecification(object):
+class KickstartSpecification:
     """Specification of kickstart data.
 
     This specification can be used to get the corresponding
@@ -90,6 +94,8 @@ class KickstartSpecificationHandler(KickstartHandler):
 
         for name, data in specification.addons.items():
             self.registerAddonData(name, data)
+
+        self.scripts = []
 
     def registerSectionData(self, name, data):
         """Register data used by a section."""

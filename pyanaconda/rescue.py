@@ -16,40 +16,51 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
-from pyanaconda.core import util
-from pyanaconda.core.configuration.anaconda import conf
-from pyanaconda.core.constants import ANACONDA_CLEANUP, THREAD_STORAGE, QUIT_MESSAGE
-from pyanaconda.modules.common.constants.objects import DEVICE_TREE
-from pyanaconda.modules.common.constants.services import STORAGE
-from pyanaconda.modules.common.errors.storage import MountFilesystemError
-from pyanaconda.modules.common.structures.storage import OSData, DeviceFormatData
-from pyanaconda.modules.common.task import sync_run_task
-from pyanaconda.core.threads import thread_manager
-from pyanaconda.flags import flags
-from pyanaconda.core.i18n import _, N_
-from pyanaconda.kickstart import runPostScripts
-from pyanaconda.ui.tui import tui_quit_callback
-from pyanaconda.ui.tui.spokes import NormalTUISpoke
+import os
+import shutil
+import sys
+import time
+from enum import Enum
 
-from pykickstart.constants import KS_REBOOT, KS_SHUTDOWN
-
+from pykickstart.constants import KS_REBOOT, KS_SCRIPT_POST, KS_SHUTDOWN
 from simpleline import App
-from simpleline.render.adv_widgets import YesNoDialog, PasswordDialog
+from simpleline.render.adv_widgets import PasswordDialog, YesNoDialog
 from simpleline.render.containers import ListColumnContainer
 from simpleline.render.prompt import Prompt
 from simpleline.render.screen import InputState
 from simpleline.render.screen_handler import ScreenHandler
-from simpleline.render.widgets import TextWidget, CheckboxWidget
-
-import os
-import shutil
-import time
-from enum import Enum
+from simpleline.render.widgets import CheckboxWidget, TextWidget
 
 from pyanaconda.anaconda_loggers import get_module_logger
+from pyanaconda.core import util
+from pyanaconda.core.configuration.anaconda import conf
+from pyanaconda.core.constants import (
+    ANACONDA_CLEANUP,
+    IPMI_ABORTED,
+    QUIT_MESSAGE,
+    THREAD_STORAGE,
+)
+from pyanaconda.core.i18n import N_, _
+from pyanaconda.core.threads import thread_manager
+from pyanaconda.errors import errorHandler
+from pyanaconda.flags import flags
+from pyanaconda.modules.common.constants.objects import DEVICE_TREE, SCRIPTS
+from pyanaconda.modules.common.constants.services import RUNTIME, STORAGE
+from pyanaconda.modules.common.errors.runtime import ScriptError
+from pyanaconda.modules.common.errors.storage import MountFilesystemError
+from pyanaconda.modules.common.structures.rescue import RescueData
+from pyanaconda.modules.common.structures.storage import (
+    DeviceData,
+    DeviceFormatData,
+    OSData,
+)
+from pyanaconda.modules.common.task import sync_run_task
+from pyanaconda.ui.tui import tui_quit_callback
+from pyanaconda.ui.tui.spokes import NormalTUISpoke
+
 log = get_module_logger(__name__)
 
-__all__ = ["RescueModeSpoke", "RootSelectionSpoke", "RescueStatusAndShellSpoke"]
+__all__ = ["RescueModeSpoke", "RescueStatusAndShellSpoke", "RootSelectionSpoke"]
 
 
 def makeFStab(instPath=""):
@@ -122,7 +133,7 @@ class RescueModeStatus(Enum):
     ROOT_NOT_FOUND = "root not found"
 
 
-class Rescue(object):
+class Rescue:
     """Rescue mode module.
 
         Provides interface to:
@@ -155,6 +166,8 @@ class Rescue(object):
         self.mount = False
         self.ro = False
 
+        self.autorelabel = False
+
         self.status = RescueModeStatus.NOT_SET
         self.error = None
 
@@ -174,13 +187,18 @@ class Rescue(object):
         task_proxy = STORAGE.get_proxy(task_path)
         sync_run_task(task_proxy)
 
+        # Collect existing systems.
         roots = OSData.from_structure_list(
             self._device_tree_proxy.GetExistingSystems()
         )
 
+        # Ignore systems without a root device.
+        roots = [r for r in roots if r.get_root_device()]
+
         if not roots:
             self.status = RescueModeStatus.ROOT_NOT_FOUND
 
+        log.debug("These systems were found: %s", str(roots))
         return roots
 
     # TODO separate running post scripts?
@@ -208,6 +226,7 @@ class Rescue(object):
             try:
                 fd = open("%s/.autorelabel" % conf.target.system_root, "w+")
                 fd.close()
+                self.autorelabel = True
             except OSError as e:
                 log.warning("Error turning on selinux: %s", e)
 
@@ -235,33 +254,43 @@ class Rescue(object):
 
         # run %post if we've mounted everything
         if not self.ro and self._scripts:
-            runPostScripts(self._scripts)
+            scripts_proxy = RUNTIME.get_proxy(SCRIPTS)
+            post_task_path = scripts_proxy.RunScriptsWithTask(KS_SCRIPT_POST)
+            post_task_proxy = RUNTIME.get_proxy(post_task_path)
+            try:
+                sync_run_task(post_task_proxy)
+            except ScriptError as e:
+                flags.ksprompt = True
+                errorHandler.cb(e)
+                util.ipmi_report(IPMI_ABORTED)
+                sys.exit(0)
+            pass
 
         self.status = RescueModeStatus.MOUNTED
         return True
 
-    def get_locked_device_names(self):
-        """Get a list of names of locked LUKS devices.
+    def get_locked_device_ids(self):
+        """Get a list of device IDs of locked LUKS devices.
 
         All LUKS devices are considered locked.
         """
-        device_names = []
+        device_ids = []
 
-        for device_name in self._device_tree_proxy.GetDevices():
+        for device_id in self._device_tree_proxy.GetDevices():
             format_data = DeviceFormatData.from_structure(
-                self._device_tree_proxy.GetFormatData(device_name)
+                self._device_tree_proxy.GetFormatData(device_id)
             )
 
             if not format_data.type == "luks":
                 continue
 
-            device_names.append(device_name)
+            device_ids.append(device_id)
 
-        return device_names
+        return device_ids
 
-    def unlock_device(self, device_name, passphrase):
+    def unlock_device(self, device_id, passphrase):
         """Unlocks LUKS device."""
-        return self._device_tree_proxy.UnlockDevice(device_name, passphrase)
+        return self._device_tree_proxy.UnlockDevice(device_id, passphrase)
 
     def run_shell(self):
         """Launch a shell."""
@@ -380,17 +409,20 @@ class RescueModeSpoke(NormalTUISpoke):
         """Attempt to unlock all locked LUKS devices."""
         passphrase = None
 
-        for device_name in self._rescue.get_locked_device_names():
+        for device_id in self._rescue.get_locked_device_ids():
             while True:
                 if passphrase is None:
-                    dialog = PasswordDialog(device_name)
+                    device_data = DeviceData.from_structure(
+                        self._rescue._device_tree_proxy.GetDeviceData(device_id)
+                    )
+                    dialog = PasswordDialog(device_data.name)
                     ScreenHandler.push_screen_modal(dialog)
                     if not dialog.answer:
                         break
 
                     passphrase = dialog.answer.strip()
 
-                if self._rescue.unlock_device(device_name, passphrase):
+                if self._rescue.unlock_device(device_id, passphrase):
                     break
 
                 passphrase = None
@@ -427,11 +459,18 @@ class RescueStatusAndShellSpoke(NormalTUISpoke):
                     finish_msg = exit_reboot_msg
                 else:
                     finish_msg = umount_msg
+
+                autorelabel_msg = (_("Warning: The rescue shell will trigger SELinux autorelabel "
+                                     "on the subsequent boot. Add \"enforcing=0\" on the kernel "
+                                     "command line for autorelabel to work properly.\n")
+                                   if self._rescue.autorelabel else "")
+
                 text = TextWidget(_("Your system has been mounted under %(mountpoint)s.\n\n"
                                     "If you would like to make the root of your system the "
                                     "root of the active system, run the command:\n\n"
                                     "\tchroot %(mountpoint)s\n\n")
-                                  % {"mountpoint": conf.target.system_root} + finish_msg)
+                                  % {"mountpoint": conf.target.system_root} + autorelabel_msg
+                                  + finish_msg)
             elif status == RescueModeStatus.MOUNT_FAILED:
                 if self._rescue.reboot:
                     finish_msg = exit_reboot_msg
@@ -451,7 +490,7 @@ class RescueStatusAndShellSpoke(NormalTUISpoke):
                     finish_msg = exit_reboot_msg
                 else:
                     finish_msg = ""
-                text = TextWidget(_("You don't have any Linux partitions.\n") + finish_msg)
+                text = TextWidget(_("No Linux systems found.\n") + finish_msg)
         else:
             if self._rescue.reboot:
                 finish_msg = exit_reboot_msg
@@ -543,12 +582,14 @@ class RootSelectionSpoke(NormalTUISpoke):
 
 def start_rescue_mode_ui(anaconda):
     """Start the rescue mode UI."""
+    runtime_proxy = RUNTIME.get_proxy()
+    rescue_data = RescueData.from_structure(runtime_proxy.Rescue)
 
     ksdata_rescue = None
-    if anaconda.ksdata.rescue.seen:
-        ksdata_rescue = anaconda.ksdata.rescue
+    if rescue_data.rescue:
+        ksdata_rescue = rescue_data
     scripts = anaconda.ksdata.scripts
-    rescue_nomount = anaconda.opts.rescue_nomount
+    rescue_nomount = rescue_data.nomount
     reboot = True
     if conf.target.is_image:
         reboot = False

@@ -21,13 +21,14 @@
 import threading
 
 from pyanaconda.anaconda_loggers import get_module_logger
+
 log = get_module_logger(__name__)
 
 
 _WORKER_THREAD_PREFIX = "AnaWorkerThread"
 
 
-class ThreadManager(object):
+class ThreadManager:
     """A singleton class for managing threads and processes.
 
        Notes:
@@ -137,8 +138,8 @@ class ThreadManager(object):
 
         if self.any_errors:
             with self._errors_lock:
-                thread_names = ", ".join(thread_name for thread_name in self._errors.keys()
-                                         if self._errors[thread_name])
+                thread_names = ", ".join(thread_name for thread_name, thread_error in self._errors.items()
+                                         if thread_error)
             msg = "Unhandled errors from the following threads detected: %s" % thread_names
             raise RuntimeError(msg)
 
@@ -202,7 +203,7 @@ class ThreadManager(object):
         """
 
         with self._errors_lock:
-            for thread_name in self._errors.keys():
+            for thread_name in self._errors:
                 thread = self._objs[thread_name]
                 thread.join()
 
@@ -221,7 +222,7 @@ class AnacondaThread(threading.Thread):
     """
 
     # class-wide dictionary ensuring unique thread names
-    _prefix_thread_counts = dict()
+    _prefix_thread_counts = {}
 
     def __init__(self, *args, **kwargs):
         # if neither name nor prefix is given, use the worker prefix
@@ -279,7 +280,9 @@ class AnacondaThread(threading.Thread):
             self._target_started()
             threading.Thread.run(self)
 
-        except:  # pylint: disable=bare-except
+        # pylint: disable=bare-except
+        # ruff: noqa: E722
+        except:
             self._target_failed(*sys.exc_info())
 
         finally:

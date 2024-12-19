@@ -32,8 +32,12 @@ COPY ["anaconda.spec.in", "requirements.txt", "/root/"]
 
 # Prepare environment and install build dependencies
 RUN set -ex; \
+  # disable fedora-cisco repository otherwise freerdp will depend on openh264 from fedora-cisco
+  # if fedora-cisco is not enabled it will fallback to stub library in main repository which is
+  # what we want
+  sed -i 's/enabled=1/enabled=0/' /etc/yum.repos.d/fedora-cisco-openh264.repo; \
   dnf install -y \
-  'dnf-command(copr)'; \
+  'dnf5-command(copr)'; \
   # Enable COPR repositories
   if ! grep -q VARIANT.*eln /etc/os-release; then \
     BRANCH="${git_branch}"; \
@@ -43,6 +47,7 @@ RUN set -ex; \
     BRANCH=${BRANCH#fedora-}; \
     dnf copr enable -y ${copr_repo} fedora-${BRANCH}-x86_64; \
     dnf copr enable -y @storage/blivet-daily fedora-${BRANCH}-x86_64; \
+    dnf copr enable -y @storage/udisks-daily fedora-${BRANCH}-x86_64; \
   else \
     dnf copr enable -y ${copr_repo} fedora-eln-x86_64; \
   fi; \
@@ -51,12 +56,12 @@ RUN set -ex; \
   # Install rest of the dependencies
   dnf install -y \
   /usr/bin/xargs \
-  npm \
   rpm-build \
   git \
   bzip2 \
   rpm-ostree \
   python3-pip \
+  rsync \
   # Need to have restorecon for the tests execution
   policycoreutils; \
   # Install non-ELN dependencies

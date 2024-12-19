@@ -16,14 +16,15 @@
 # License and may only be used or replicated with the express permission of
 # Red Hat, Inc.
 #
-from pyanaconda.core.threads import thread_manager
-from pyanaconda.ui.gui import GUIObject
-from pyanaconda.ui.gui.utils import gtk_call_once
-from pyanaconda.core.async_utils import async_action_wait
-from pyanaconda.core import constants
 import threading
 
 from pyanaconda.anaconda_loggers import get_module_logger
+from pyanaconda.core import constants
+from pyanaconda.core.async_utils import async_action_wait
+from pyanaconda.core.threads import thread_manager
+from pyanaconda.ui.gui import GUIObject
+from pyanaconda.ui.gui.utils import gtk_call_once
+
 log = get_module_logger(__name__)
 
 __all__ = ["DasdFormatDialog"]
@@ -65,7 +66,7 @@ class DasdFormatDialog(GUIObject):
                 self._epoch += 1
         return rc
 
-    def on_return_to_hub_link_clicked(self, label, uri):
+    def on_return_to_hub_link_clicked(self, _label, _uri):
         """
         The user clicked on the link that takes them back to the hub.  We need
         to kill the _check_format watcher and then emit a special response ID

@@ -19,19 +19,21 @@
 from dasbus.structure import DBusData
 from dasbus.typing import *  # pylint: disable=wildcard-import
 
-__all__ = ["DeviceData", "DeviceFormatData", "DeviceActionData", "OSData"]
+__all__ = ["DeviceActionData", "DeviceData", "DeviceFormatData", "OSData"]
 
 
 class DeviceData(DBusData):
     """Device data."""
 
     def __init__(self):
+        self._device_id = ""
         self._type = ""
         self._name = ""
         self._path = ""
         self._size = 0
         self._parents = []
         self._children = []
+        self._links = []
         self._is_disk = False
         self._protected = False
         self._removable = False
@@ -61,6 +63,18 @@ class DeviceData(DBusData):
     @name.setter
     def name(self, name: Str):
         self._name = name
+
+    @property
+    def device_id(self) -> Str:
+        """A ID of the device
+
+        :return: a device ID
+        """
+        return self._device_id
+
+    @device_id.setter
+    def device_id(self, device_id: Str):
+        self._device_id = device_id
 
     @property
     def path(self) -> Str:
@@ -120,25 +134,37 @@ class DeviceData(DBusData):
     def parents(self) -> List[Str]:
         """Parents of the device.
 
-        :return: a list of device names
+        :return: a list of device IDs
         """
         return self._parents
 
     @parents.setter
-    def parents(self, names):
-        self._parents = names
+    def parents(self, ids):
+        self._parents = ids
 
     @property
     def children(self) -> List[Str]:
         """Children of the device.
 
-        :return: a list of device names
+        :return: a list of device IDs
         """
         return self._children
 
     @children.setter
     def children(self, value):
         self._children = value
+
+    @property
+    def links(self) -> List[Str]:
+        """Symbolic links for the device.
+
+        :return: a list of device paths
+        """
+        return self._links
+
+    @links.setter
+    def links(self, value):
+        self._links = value
 
     @property
     def attrs(self) -> Dict[Str, Str]:
@@ -168,15 +194,23 @@ class DeviceData(DBusData):
             target
             path-id
 
-        Attributes for NVDIMM:
-            mode
-            namespace
-            path-id
+        Attributes for NVMe Fabrics:
+            nsid
+            eui64
+            nguid
+            controllers-id
+            transports-type
+            transports-address
+            subsystems-nqn
 
         Attributes for ZFCP:
             fcp-lun
             wwpn
             hba-id
+            path-id
+
+        Attributes for partitions:
+            partition-type-name
 
         :return: a dictionary of attributes
         """
@@ -207,6 +241,7 @@ class DeviceFormatData(DBusData):
     def __init__(self):
         self._type = ""
         self._mountable = False
+        self._formattable = False
         self._attrs = {}
         self._description = ""
 
@@ -232,6 +267,15 @@ class DeviceFormatData(DBusData):
         self._mountable = value
 
     @property
+    def formattable(self) -> Bool:
+        """Is this something we can format?"""
+        return self._formattable
+
+    @formattable.setter
+    def formattable(self, value: Bool):
+        self._formattable = value
+
+    @property
     def attrs(self) -> Dict[Str, Str]:
         """Additional attributes.
 
@@ -244,6 +288,9 @@ class DeviceFormatData(DBusData):
 
         Attributes for file systems:
             mount-point
+
+        Attributes for LUKS:
+            has_key
 
         :return: a dictionary of attributes
         """
@@ -279,6 +326,7 @@ class DeviceActionData(DBusData):
         self._object_description = ""
 
         self._device_name = ""
+        self._device_id = ""
         self._device_description = ""
 
         self._attrs = {}
@@ -349,6 +397,18 @@ class DeviceActionData(DBusData):
     @device_name.setter
     def device_name(self, name: Str):
         self._device_name = name
+
+    @property
+    def device_id(self) -> Str:
+        """A ID of the device.
+
+        :return: a device ID
+        """
+        return self._device_id
+
+    @device_id.setter
+    def device_id(self, device_id: Str):
+        self._device_id = device_id
 
     @property
     def device_description(self) -> Str:
@@ -440,3 +500,87 @@ class OSData(DBusData):
         :return: a device name or None
         """
         return self.mount_points.get("/")
+
+
+class MountPointConstraintsData(DBusData):
+    """Constrains (filesystem and device types allowed) for mount points"""
+
+    def __init__(self):
+        self._mount_point = ""
+        self._required_filesystem_type = ""
+        self._encryption_allowed = False
+        self._logical_volume_allowed = False
+        self._required = False
+        self._recommended = False
+
+    @property
+    def mount_point(self) -> Str:
+        """Mount point value, e.g. /boot/efi
+
+        :return: a string with mount point
+        """
+        return self._mount_point
+
+    @mount_point.setter
+    def mount_point(self, mount_point: Str):
+        self._mount_point = mount_point
+
+    @property
+    def required_filesystem_type(self) -> Str:
+        """Filesystem type required for mount point
+
+        :return: a string with filesystem type required for this mount point
+        """
+        return self._required_filesystem_type
+
+    @required_filesystem_type.setter
+    def required_filesystem_type(self, required_filesystem_type: Str):
+        self._required_filesystem_type = required_filesystem_type
+
+    @property
+    def encryption_allowed(self) -> Bool:
+        """Whether this mount point can be encrypted or not
+
+        :return: bool
+        """
+        return self._encryption_allowed
+
+    @encryption_allowed.setter
+    def encryption_allowed(self, encryption_allowed: Bool):
+        self._encryption_allowed = encryption_allowed
+
+    @property
+    def logical_volume_allowed(self) -> Bool:
+        """Whether this mount point can be a LVM logical volume or not
+
+        :return: bool
+        """
+        return self._logical_volume_allowed
+
+    @logical_volume_allowed.setter
+    def logical_volume_allowed(self, logical_volume_allowed: Bool):
+        self._logical_volume_allowed = logical_volume_allowed
+
+    @property
+    def required(self) -> Bool:
+        """Whether this mount point is required
+
+        :return: bool
+        """
+        return self._required
+
+    @required.setter
+    def required(self, required: Bool):
+        self._required = required
+
+    @property
+    def recommended(self) -> Bool:
+        """Whether this mount point is recommended
+
+        :return: bool
+        """
+        return self._recommended
+
+    @recommended.setter
+    def recommended(self, recommended: Bool):
+        self._recommended = recommended

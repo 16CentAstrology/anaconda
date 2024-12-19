@@ -17,14 +17,25 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 from dasbus.identifier import DBusObjectIdentifier
-from pyanaconda.modules.common.constants.namespaces import STORAGE_NAMESPACE, NETWORK_NAMESPACE, \
-    PARTITIONING_NAMESPACE, DEVICE_TREE_NAMESPACE, \
-    RHSM_NAMESPACE, BOSS_NAMESPACE
 
-# Boss objects.
+from pyanaconda.modules.common.constants.namespaces import (
+    DEVICE_TREE_NAMESPACE,
+    NETWORK_NAMESPACE,
+    PARTITIONING_NAMESPACE,
+    RHSM_NAMESPACE,
+    RUNTIME_NAMESPACE,
+    STORAGE_NAMESPACE,
+)
+
+# Runtime objects
+
+SCRIPTS = DBusObjectIdentifier(
+    namespace=RUNTIME_NAMESPACE,
+    basename="Scripts"
+)
 
 USER_INTERFACE = DBusObjectIdentifier(
-    namespace=BOSS_NAMESPACE,
+    namespace=RUNTIME_NAMESPACE,
     basename="UserInterface"
 )
 
@@ -89,9 +100,9 @@ ISCSI = DBusObjectIdentifier(
     basename="iSCSI"
 )
 
-NVDIMM = DBusObjectIdentifier(
+NVME = DBusObjectIdentifier(
     namespace=STORAGE_NAMESPACE,
-    basename="NVDIMM"
+    basename="NVMe"
 )
 
 SNAPSHOT = DBusObjectIdentifier(
@@ -138,16 +149,6 @@ RHSM_REGISTER = DBusObjectIdentifier(
 RHSM_UNREGISTER = DBusObjectIdentifier(
     namespace=RHSM_NAMESPACE,
     basename="Unregister"
-)
-
-RHSM_ATTACH = DBusObjectIdentifier(
-    namespace=RHSM_NAMESPACE,
-    basename="Attach"
-)
-
-RHSM_ENTITLEMENT = DBusObjectIdentifier(
-    namespace=RHSM_NAMESPACE,
-    basename="Entitlement"
 )
 
 RHSM_SYSPURPOSE = DBusObjectIdentifier(

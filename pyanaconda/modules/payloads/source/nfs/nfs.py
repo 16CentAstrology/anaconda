@@ -25,13 +25,20 @@ from pyanaconda.core.i18n import _
 from pyanaconda.core.payload import create_nfs_url, parse_nfs_url
 from pyanaconda.modules.common.errors.general import InvalidValueError
 from pyanaconda.modules.common.structures.payload import RepoConfigurationData
-from pyanaconda.modules.payloads.constants import SourceType, SourceState
+from pyanaconda.modules.payloads.constants import SourceState, SourceType
 from pyanaconda.modules.payloads.source.mount_tasks import TearDownMountTask
-from pyanaconda.modules.payloads.source.nfs.initialization import SetUpNFSSourceTask, \
-    SetUpNFSSourceResult
-from pyanaconda.modules.payloads.source.source_base import PayloadSourceBase, RPMSourceMixin, \
-    RepositorySourceMixin
-from pyanaconda.modules.payloads.source.source_base_interface import RepositorySourceInterface
+from pyanaconda.modules.payloads.source.nfs.initialization import (
+    SetUpNFSSourceResult,
+    SetUpNFSSourceTask,
+)
+from pyanaconda.modules.payloads.source.source_base import (
+    PayloadSourceBase,
+    RepositorySourceMixin,
+    RPMSourceMixin,
+)
+from pyanaconda.modules.payloads.source.source_base_interface import (
+    RepositorySourceInterface,
+)
 from pyanaconda.modules.payloads.source.utils import MountPointGenerator
 
 log = get_module_logger(__name__)
@@ -115,13 +122,13 @@ class NFSSourceModule(PayloadSourceBase, RepositorySourceMixin, RPMSourceMixin):
         """Validate the specified source configuration."""
         if not configuration.url.startswith("nfs:"):
             raise InvalidValueError(
-                "Invalid protocol of a NFS source: '{}'"
+                "Invalid protocol of an NFS source: '{}'"
                 "".format(configuration.url)
             )
 
         if configuration.type != URL_TYPE_BASEURL:
             raise InvalidValueError(
-                "Invalid URL type of a NFS source: '{}'"
+                "Invalid URL type of an NFS source: '{}'"
                 "".format(configuration.type)
             )
 

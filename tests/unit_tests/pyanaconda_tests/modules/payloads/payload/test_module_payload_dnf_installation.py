@@ -18,24 +18,38 @@
 import os
 import tempfile
 import unittest
+from unittest.mock import Mock, call, patch
+
 import pytest
 
-from unittest.mock import patch, call, Mock
-
-from pyanaconda.core.constants import RPM_LANGUAGES_NONE, MULTILIB_POLICY_ALL
+from pyanaconda.core.constants import MULTILIB_POLICY_ALL, RPM_LANGUAGES_NONE
 from pyanaconda.core.path import join_paths
-from pyanaconda.modules.common.errors.installation import NonCriticalInstallationError, \
-    PayloadInstallationError
-from pyanaconda.modules.common.structures.packages import PackagesConfigurationData, \
-    PackagesSelectionData
+from pyanaconda.modules.common.errors.installation import (
+    NonCriticalInstallationError,
+    PayloadInstallationError,
+)
+from pyanaconda.modules.common.structures.packages import (
+    PackagesConfigurationData,
+    PackagesSelectionData,
+)
 from pyanaconda.modules.common.structures.payload import RepoConfigurationData
 from pyanaconda.modules.common.structures.requirement import Requirement
-from pyanaconda.modules.payloads.payload.dnf.dnf_manager import DNFManager, MissingSpecsError, \
-    BrokenSpecsError, InvalidSelectionError
-from pyanaconda.modules.payloads.payload.dnf.installation import ImportRPMKeysTask, \
-    SetRPMMacrosTask, DownloadPackagesTask, InstallPackagesTask, PrepareDownloadLocationTask, \
-    CleanUpDownloadLocationTask, ResolvePackagesTask, UpdateDNFConfigurationTask, \
-    WriteRepositoriesTask
+from pyanaconda.modules.payloads.payload.dnf.dnf_manager import (
+    DNFManager,
+    InvalidSelectionError,
+    MissingSpecsError,
+)
+from pyanaconda.modules.payloads.payload.dnf.installation import (
+    CleanUpDownloadLocationTask,
+    DownloadPackagesTask,
+    ImportRPMKeysTask,
+    InstallPackagesTask,
+    PrepareDownloadLocationTask,
+    ResolvePackagesTask,
+    SetRPMMacrosTask,
+    UpdateDNFConfigurationTask,
+    WriteRepositoriesTask,
+)
 
 
 class SetRPMMacrosTaskTestCase(unittest.TestCase):
@@ -196,11 +210,12 @@ class ImportRPMKeysTaskTestCase(unittest.TestCase):
                 call("rpm", ["--import", key_2], root=sysroot),
             ])
 
+    @patch("pyanaconda.modules.payloads.payload.dnf.installation.os.uname")
     @patch("pyanaconda.modules.payloads.payload.dnf.installation.util")
-    def test_import_substitution(self, mock_util):
+    def test_import_substitution(self, mock_util, mock_uname):
         """Import GPG keys with variables."""
         mock_util.execWithRedirect.return_value = 0
-        mock_util.execWithCapture.return_value = "s390x"
+        mock_uname.return_value = Mock(machine='s390x')
         mock_util.get_os_release_value.return_value = "34"
 
         key = "/etc/pki/rpm-gpg/RPM-GPG-KEY-fedora-$releasever-$basearch"
@@ -373,13 +388,12 @@ class ResolvePackagesTaskTestCase(unittest.TestCase):
 
         dnf_manager = Mock()
         dnf_manager.default_environment = None
+        data = PackagesConfigurationData()
 
-        task = ResolvePackagesTask(dnf_manager, selection)
+        task = ResolvePackagesTask(dnf_manager, selection, data)
         task.run()
 
         dnf_manager.clear_selection.assert_called_once_with()
-        dnf_manager.disable_modules.assert_called_once_with([])
-        dnf_manager.enable_modules.assert_called_once_with([])
         dnf_manager.apply_specs.assert_called_once_with(
             ["@core", "@r1", "@r2", "r4", "r5"], ["@r3", "r6"]
         )
@@ -403,24 +417,24 @@ class ResolvePackagesTaskTestCase(unittest.TestCase):
         dnf_manager = Mock()
         dnf_manager.default_environment = None
 
-        dnf_manager.disable_modules.side_effect = MissingSpecsError("e1")
         dnf_manager.apply_specs.side_effect = MissingSpecsError("e2")
 
         with pytest.raises(NonCriticalInstallationError) as cm:
-            task = ResolvePackagesTask(dnf_manager, selection)
+            data = PackagesConfigurationData()
+            task = ResolvePackagesTask(dnf_manager, selection, data)
             task.run()
 
-        expected = "e1\n\ne2"
+        expected = "e2"
         assert str(cm.value) == expected
 
-        dnf_manager.enable_modules.side_effect = BrokenSpecsError("e3")
         dnf_manager.resolve_selection.side_effect = InvalidSelectionError("e4")
 
         with pytest.raises(PayloadInstallationError) as cm:
-            task = ResolvePackagesTask(dnf_manager, selection)
+            data = PackagesConfigurationData()
+            task = ResolvePackagesTask(dnf_manager, selection, data)
             task.run()
 
-        expected = "e3\n\ne4"
+        expected = "e4"
         assert str(cm.value) == expected
 
 
@@ -432,8 +446,9 @@ class UpdateDNFConfigurationTaskTestCase(unittest.TestCase):
         """Don't update the DNF configuration."""
         with tempfile.TemporaryDirectory() as sysroot:
             data = PackagesConfigurationData()
+            dnf_manager = DNFManager()
 
-            task = UpdateDNFConfigurationTask(sysroot, data)
+            task = UpdateDNFConfigurationTask(sysroot, data, dnf_manager)
             task.run()
 
             execute.assert_not_called()
@@ -446,8 +461,9 @@ class UpdateDNFConfigurationTaskTestCase(unittest.TestCase):
         with tempfile.TemporaryDirectory() as sysroot:
             data = PackagesConfigurationData()
             data.multilib_policy = MULTILIB_POLICY_ALL
+            dnf_manager = DNFManager()
 
-            task = UpdateDNFConfigurationTask(sysroot, data)
+            task = UpdateDNFConfigurationTask(sysroot, data, dnf_manager)
 
             with self.assertLogs(level="WARNING") as cm:
                 task.run()
@@ -463,8 +479,9 @@ class UpdateDNFConfigurationTaskTestCase(unittest.TestCase):
         with tempfile.TemporaryDirectory() as sysroot:
             data = PackagesConfigurationData()
             data.multilib_policy = MULTILIB_POLICY_ALL
+            dnf_manager = DNFManager()
 
-            task = UpdateDNFConfigurationTask(sysroot, data)
+            task = UpdateDNFConfigurationTask(sysroot, data, dnf_manager)
 
             with self.assertLogs(level="WARNING") as cm:
                 task.run()
@@ -473,15 +490,17 @@ class UpdateDNFConfigurationTaskTestCase(unittest.TestCase):
             assert any(map(lambda x: msg in x, cm.output))
 
     @patch("pyanaconda.core.util.execWithRedirect")
-    def test_multilib_policy(self, execute):
-        """Update the multilib policy."""
+    def test_multilib_policy_dnf4(self, execute):
+        """Update the multilib policy on pre-dnf5 systems."""
         execute.return_value = 0
 
         with tempfile.TemporaryDirectory() as sysroot:
             data = PackagesConfigurationData()
             data.multilib_policy = MULTILIB_POLICY_ALL
+            dnf_manager = Mock(spec=DNFManager)
+            dnf_manager.is_package_available.return_value = False
 
-            task = UpdateDNFConfigurationTask(sysroot, data)
+            task = UpdateDNFConfigurationTask(sysroot, data, dnf_manager)
             task.run()
 
             execute.assert_called_once_with(
@@ -490,6 +509,30 @@ class UpdateDNFConfigurationTaskTestCase(unittest.TestCase):
                     "config-manager",
                     "--save",
                     "--setopt=multilib_policy=all",
+                ],
+                root=sysroot
+            )
+
+    @patch("pyanaconda.core.util.execWithRedirect")
+    def test_multilib_policy_dnf5(self, execute):
+        """Update the multilib policy on dnf5 systems."""
+        execute.return_value = 0
+
+        with tempfile.TemporaryDirectory() as sysroot:
+            data = PackagesConfigurationData()
+            data.multilib_policy = MULTILIB_POLICY_ALL
+            dnf_manager = Mock(spec=DNFManager)
+            dnf_manager.is_package_available.return_value = True
+
+            task = UpdateDNFConfigurationTask(sysroot, data, dnf_manager)
+            task.run()
+
+            execute.assert_called_once_with(
+                "dnf",
+                [
+                    "config-manager",
+                    "setopt",
+                    "multilib_policy=all",
                 ],
                 root=sysroot
             )

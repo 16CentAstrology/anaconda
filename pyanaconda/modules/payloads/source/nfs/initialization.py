@@ -20,19 +20,21 @@ import os.path
 from collections import namedtuple
 
 from pyanaconda.anaconda_loggers import get_module_logger
-from pyanaconda.core.payload import parse_nfs_url
 from pyanaconda.core.path import join_paths
+from pyanaconda.core.payload import parse_nfs_url
 from pyanaconda.modules.common.errors.payload import SourceSetupError
 from pyanaconda.modules.common.task import Task
-from pyanaconda.modules.payloads.source.utils import find_and_mount_iso_image, \
-    verify_valid_repository
+from pyanaconda.modules.payloads.source.utils import (
+    find_and_mount_iso_image,
+    verify_valid_repository,
+)
 from pyanaconda.payload.utils import mount, unmount
 
 log = get_module_logger(__name__)
 
 __all__ = [
-    "SetUpNFSSourceTask",
-    "SetUpNFSSourceResult"
+    "SetUpNFSSourceResult",
+    "SetUpNFSSourceTask"
 ]
 
 SetUpNFSSourceResult = namedtuple(
@@ -59,14 +61,14 @@ class SetUpNFSSourceTask(Task):
 
     @property
     def name(self):
-        return "Set up a NFS source"
+        return "Set up an NFS source"
 
     def run(self):
         """Set up the installation source.
 
         :return SetUpNFSSourceResult: a result data
         """
-        log.debug("Setting up a NFS source: %s", self._url)
+        log.debug("Setting up an NFS source: %s", self._url)
 
         # Set up the NFS source.
         install_tree_path = self._set_up_source()

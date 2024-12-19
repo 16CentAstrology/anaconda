@@ -1,7 +1,7 @@
 #
 # anaconda_logging.py: Support for logging to multiple destinations with log
 #                      levels - basically an extension to the Python logging
-#                      module with Anaconda specififc enhancements.
+#                      module with Anaconda specific enhancements.
 #
 # Copyright (C) 2000, 2001, 2002, 2005, 2017  Red Hat, Inc.  All rights reserved.
 #
@@ -20,13 +20,22 @@
 #
 
 import logging
-from logging.handlers import SysLogHandler, SocketHandler
-from systemd.journal import JournalHandler
 import os
 import sys
 import warnings
+from logging.handlers import SocketHandler, SysLogHandler
+
+from systemd import journal
 
 from pyanaconda.core import constants
+from pyanaconda.core.glib import (
+    LogLevelFlags,
+    LogWriterOutput,
+    log_set_handler,
+    log_set_writer_func,
+    log_writer_format_fields,
+)
+from pyanaconda.core.path import set_mode
 
 ENTRY_FORMAT = "%(asctime)s,%(msecs)03d %(levelname)s %(name)s: %(message)s"
 STDOUT_FORMAT = "%(asctime)s %(message)s"
@@ -38,16 +47,15 @@ ANACONDA_SYSLOG_FORMAT = "anaconda: %(log_prefix)s: %(message)s"
 
 MAIN_LOG_FILE = "/tmp/anaconda.log"
 PROGRAM_LOG_FILE = "/tmp/program.log"
-PACKAGING_LOG_FILE = "/tmp/packaging.log"
-LIBREPO_LOG_FILE = "/tmp/dnf.librepo.log"
 ANACONDA_SYSLOG_FACILITY = SysLogHandler.LOG_LOCAL1
 ANACONDA_SYSLOG_IDENTIFIER = "anaconda"
 
 from threading import Lock
+
 program_log_lock = Lock()
 
 
-class _AnacondaLogFixer(object):
+class _AnacondaLogFixer:
     """ A mixin for logging.StreamHandler that does not lock during format.
 
         Add this mixin before the Handler type in the inheritance order.
@@ -73,7 +81,7 @@ class _AnacondaLogFixer(object):
         # Wrap the stream write in a lock acquisition
         # Use an object proxy in order to work with types that may not allow
         # the write property to be set.
-        class WriteProxy(object):
+        class WriteProxy:
 
             def write(self, *args, **kwargs):
                 handler.acquire()  # pylint: disable=no-member
@@ -95,11 +103,11 @@ class _AnacondaLogFixer(object):
         self._stream = WriteProxy()  # pylint: disable=attribute-defined-outside-init
 
 
-class AnacondaJournalHandler(_AnacondaLogFixer, JournalHandler):
+class AnacondaJournalHandler(_AnacondaLogFixer, journal.JournalHandler):
     def __init__(self, tag='', facility=ANACONDA_SYSLOG_FACILITY,
                  identifier=ANACONDA_SYSLOG_IDENTIFIER):
         self.tag = tag
-        JournalHandler.__init__(self,
+        journal.JournalHandler.__init__(self,
                                 SYSLOG_FACILITY=facility,
                                 SYSLOG_IDENTIFIER=identifier)
 
@@ -107,10 +115,10 @@ class AnacondaJournalHandler(_AnacondaLogFixer, JournalHandler):
         if self.tag:
             original_msg = record.msg
             record.msg = '%s: %s' % (self.tag, original_msg)
-            JournalHandler.emit(self, record)
+            journal.JournalHandler.emit(self, record)
             record.msg = original_msg
         else:
-            JournalHandler.emit(self, record)
+            journal.JournalHandler.emit(self, record)
 
 
 class AnacondaSocketHandler(_AnacondaLogFixer, SocketHandler):
@@ -119,8 +127,10 @@ class AnacondaSocketHandler(_AnacondaLogFixer, SocketHandler):
 
 
 class AnacondaFileHandler(_AnacondaLogFixer, logging.FileHandler):
-    pass
+    def __init__(self, file_dest):
+        logging.FileHandler.__init__(self, file_dest)
 
+        set_mode(file_dest)
 
 class AnacondaStreamHandler(_AnacondaLogFixer, logging.StreamHandler):
     pass
@@ -146,7 +156,7 @@ class AnacondaPrefixFilter(logging.Filter):
         return True
 
 
-class AnacondaLog(object):
+class AnacondaLog:
     SYSLOG_CFGFILE = "/etc/rsyslog.conf"
 
     def __init__(self, write_to_journal=False):
@@ -180,30 +190,14 @@ class AnacondaLog(object):
         self.addFileHandler(PROGRAM_LOG_FILE, program_logger)
         self.forwardToJournal(program_logger)
 
-        # Create the packaging logger.
-        packaging_logger = logging.getLogger(constants.LOGGER_PACKAGING)
-        packaging_logger.setLevel(logging.DEBUG)
-        packaging_logger.propagate = False
-        self.addFileHandler(PACKAGING_LOG_FILE, packaging_logger)
-        self.forwardToJournal(packaging_logger)
-
-        # Create the dnf logger and link it to packaging
-        dnf_logger = logging.getLogger(constants.LOGGER_DNF)
-        dnf_logger.setLevel(logging.DEBUG)
-        self.addFileHandler(PACKAGING_LOG_FILE, dnf_logger)
-        self.forwardToJournal(dnf_logger)
-
-        # Create the librepo logger.
-        librepo_logger = logging.getLogger(constants.LOGGER_LIBREPO)
-        librepo_logger.setLevel(logging.DEBUG)
-        self.addFileHandler(LIBREPO_LOG_FILE, librepo_logger)
-        self.forwardToJournal(librepo_logger)
-
         # Create the simpleline logger and link it to anaconda
         simpleline_logger = logging.getLogger(constants.LOGGER_SIMPLELINE)
         simpleline_logger.setLevel(logging.DEBUG)
         self.addFileHandler(MAIN_LOG_FILE, simpleline_logger)
         self.forwardToJournal(simpleline_logger)
+
+        # Redirect GLib logging (e.g. GTK) to Journal
+        self.redirect_glib_logging_to_journal()
 
         # Create a second logger for just the stuff we want to dup on
         # stdout.  Anything written here will also get passed up to the
@@ -249,6 +243,38 @@ class AnacondaLog(object):
         if log_formatter:
             journal_handler.setFormatter(log_formatter)
         logr.addHandler(journal_handler)
+
+    def redirect_glib_logging_to_journal(self):
+        """Redirect GLib based library logging to the journal.
+
+        Some GLib based libraries (such as GTK) do direct their
+        sometimes quite verbose log messages to the output of the
+        process in which they are running. In the Anaconda case,
+        this creates issues with TTY1 being spammed with those
+        messages, with important content (such as RDP connection instructions)
+        being scrolled out of view.
+
+        :param log: anaconda log handler
+        """
+        # create functions that convert the messages coming
+        # from GLib into something that fits to the anaconda logging format
+        def log_adapter(domain, level, message, user_data):
+            if level in (LogLevelFlags.LEVEL_ERROR,
+                         LogLevelFlags.LEVEL_CRITICAL):
+                self.anaconda_logger.error("GLib: %s", message)
+            elif level is LogLevelFlags.LEVEL_WARNING:
+                self.anaconda_logger.warning("GLib: %s", message)
+
+            self.anaconda_logger.debug("GLib: %s", message)
+
+        def structured_log_adapter(level, fields, field_count, user_data):
+            message = log_writer_format_fields(level, fields, True)
+            self.anaconda_logger.debug("GLib: %s", message)
+            return LogWriterOutput.HANDLED
+
+        # redirect GLib log output via the functions
+        log_set_handler(None, LogLevelFlags.LEVEL_MASK, log_adapter, None)
+        log_set_writer_func(structured_log_adapter, None)
 
     # pylint: disable=redefined-builtin
     def showwarning(self, message, category, filename, lineno,

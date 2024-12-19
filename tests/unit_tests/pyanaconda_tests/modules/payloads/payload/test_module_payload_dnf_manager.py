@@ -17,33 +17,46 @@
 #
 import os.path
 import unittest
-from textwrap import dedent
-
-import pytest
-
 from tempfile import TemporaryDirectory
-from unittest.mock import patch, Mock, call
+from textwrap import dedent
+from unittest.mock import Mock, call, patch
 
-from blivet.size import Size, ROUND_UP
+import libdnf.transaction
+import pytest
+from blivet.size import ROUND_UP, Size
 from dasbus.structure import compare_data
-
-from dnf.callback import STATUS_OK, STATUS_FAILED, PKG_SCRIPTLET
-from dnf.comps import Environment, Comps, Group
-from dnf.exceptions import MarkingErrors, DepsolveError, RepoError
+from dnf.callback import PKG_SCRIPTLET, STATUS_FAILED, STATUS_OK
+from dnf.comps import Comps, Environment, Group
+from dnf.exceptions import DepsolveError, MarkingErrors, RepoError
 from dnf.package import Package
-from dnf.transaction import PKG_INSTALL, TRANS_POST, PKG_VERIFY
 from dnf.repo import Repo
+from dnf.transaction import PKG_INSTALL, TRANS_POST
 
-from pyanaconda.core.constants import MULTILIB_POLICY_ALL, URL_TYPE_BASEURL, URL_TYPE_MIRRORLIST, \
-    URL_TYPE_METALINK
+from pyanaconda.core.constants import (
+    MULTILIB_POLICY_ALL,
+    URL_TYPE_BASEURL,
+    URL_TYPE_METALINK,
+    URL_TYPE_MIRRORLIST,
+)
 from pyanaconda.modules.common.errors.installation import PayloadInstallationError
-from pyanaconda.modules.common.errors.payload import UnknownCompsEnvironmentError, \
-    UnknownCompsGroupError, UnknownRepositoryError
-from pyanaconda.modules.common.structures.comps import CompsEnvironmentData, CompsGroupData
+from pyanaconda.modules.common.errors.payload import (
+    UnknownCompsEnvironmentError,
+    UnknownCompsGroupError,
+    UnknownRepositoryError,
+)
+from pyanaconda.modules.common.structures.comps import (
+    CompsEnvironmentData,
+    CompsGroupData,
+)
 from pyanaconda.modules.common.structures.packages import PackagesConfigurationData
 from pyanaconda.modules.common.structures.payload import RepoConfigurationData
-from pyanaconda.modules.payloads.payload.dnf.dnf_manager import DNFManager, \
-    InvalidSelectionError, BrokenSpecsError, MissingSpecsError, MetadataError
+from pyanaconda.modules.payloads.payload.dnf.dnf_manager import (
+    BrokenSpecsError,
+    DNFManager,
+    InvalidSelectionError,
+    MetadataError,
+    MissingSpecsError,
+)
 
 
 class DNFManagerTestCase(unittest.TestCase):
@@ -109,7 +122,9 @@ class DNFManagerTestCase(unittest.TestCase):
         self._check_substitutions({
             "arch": "x86_64",
             "basearch": "x86_64",
-            "releasever": "rawhide"
+            "releasever": "rawhide",
+            "releasever_major": "rawhide",
+            "releasever_minor": "",
         })
 
     @patch("pyanaconda.modules.payloads.payload.dnf.dnf_manager.get_os_release_value")
@@ -231,50 +246,6 @@ class DNFManagerTestCase(unittest.TestCase):
         size = self.dnf_manager.get_download_size()
 
         assert size == Size("450 MiB")
-
-    @patch("dnf.module.module_base.ModuleBase.enable")
-    def test_enable_modules(self, module_base_enable):
-        """Test the enable_modules method."""
-        self.dnf_manager.enable_modules(
-            module_specs=["m1", "m2:latest"]
-        )
-        module_base_enable.assert_called_once_with(
-            ["m1", "m2:latest"]
-        )
-
-    @patch("dnf.module.module_base.ModuleBase.enable")
-    def test_enable_modules_error(self, module_base_enable):
-        """Test the failed enable_modules method."""
-        module_base_enable.side_effect = MarkingErrors(
-            module_depsolv_errors=["e1", "e2"]
-        )
-
-        with pytest.raises(BrokenSpecsError):
-            self.dnf_manager.enable_modules(
-                module_specs=["m1", "m2:latest"]
-            )
-
-    @patch("dnf.module.module_base.ModuleBase.disable")
-    def test_disable_modules(self, module_base_disable):
-        """Test the enable_modules method."""
-        self.dnf_manager.disable_modules(
-            module_specs=["m1", "m2:latest"]
-        )
-        module_base_disable.assert_called_once_with(
-            ["m1", "m2:latest"]
-        )
-
-    @patch("dnf.module.module_base.ModuleBase.disable")
-    def test_disable_modules_error(self, module_base_disable):
-        """Test the failed enable_modules method."""
-        module_base_disable.side_effect = MarkingErrors(
-            module_depsolv_errors=["e1", "e2"]
-        )
-
-        with pytest.raises(BrokenSpecsError):
-            self.dnf_manager.disable_modules(
-                module_specs=["m1", "m2:latest"]
-            )
 
     @patch("dnf.base.Base.install_specs")
     def test_apply_specs(self, install_specs):
@@ -452,6 +423,9 @@ class DNFManagerTestCase(unittest.TestCase):
         calls = []
         do_transaction.side_effect = self._install_packages
 
+        # Fake transaction.
+        self.dnf_manager._base.transaction = [Mock(), Mock(), Mock()]
+
         self.dnf_manager.install_packages(calls.append)
 
         assert calls == [
@@ -462,9 +436,6 @@ class DNFManagerTestCase(unittest.TestCase):
             'Configuring p1.x86_64',
             'Configuring p2.x86_64',
             'Configuring p3.x86_64',
-            'Verifying p1.x86_64 (1/3)',
-            'Verifying p2.x86_64 (2/3)',
-            'Verifying p3.x86_64 (3/3)',
         ]
 
     def _get_package(self, name):
@@ -493,9 +464,6 @@ class DNFManagerTestCase(unittest.TestCase):
         for ts_done, package in enumerate(packages):
             progress.progress(package, PKG_SCRIPTLET, 100, 100, ts_done + 1, ts_total)
 
-        for ts_done, package in enumerate(packages):
-            progress.progress(package, PKG_VERIFY, 100, 100, ts_done + 1, ts_total)
-
     @patch("dnf.base.Base.do_transaction")
     def test_install_packages_failed(self, do_transaction):
         """Test the failed install_packages method."""
@@ -516,15 +484,38 @@ class DNFManagerTestCase(unittest.TestCase):
         progress.error("The p1 package couldn't be installed!")
 
     @patch("dnf.base.Base.do_transaction")
+    def test_install_packages_dnf_ts_item_error(self, do_transaction):
+        """Test install_packages method failing on transaction item error."""
+        calls = []
+
+        # Fake transaction.
+        tsi_1 = Mock()
+        tsi_1.state = libdnf.transaction.TransactionItemState_ERROR
+
+        tsi_2 = Mock()
+
+        self.dnf_manager._base.transaction = [tsi_1, tsi_2]
+
+        with pytest.raises(PayloadInstallationError) as cm:
+            self.dnf_manager.install_packages(calls.append)
+
+        msg = "An error occurred during the transaction: " \
+              "The transaction process has ended with errors."
+
+        assert str(cm.value) == msg
+        assert calls == []
+
+    @patch("dnf.base.Base.do_transaction")
     def test_install_packages_quit(self, do_transaction):
         """Test the terminated install_packages method."""
         calls = []
         do_transaction.side_effect = self._install_packages_quit
 
-        with pytest.raises(RuntimeError) as cm:
+        with pytest.raises(PayloadInstallationError) as cm:
             self.dnf_manager.install_packages(calls.append)
 
-        msg = "The transaction process has ended abruptly: " \
+        msg = "An error occurred during the transaction: " \
+              "The transaction process has ended abruptly: " \
               "Something went wrong with the p1 package!"
 
         assert msg in str(cm.value)
@@ -589,25 +580,21 @@ class DNFManagerTestCase(unittest.TestCase):
         self._check_substitutions({
             "arch": "x86_64",
             "basearch": "x86_64",
-            "releasever": "123"
+            "releasever": "123",
+            "releasever_major": "123",
+            "releasever_minor": "",
         })
 
-    def test_reset_substitution(self):
-        """Test the reset_substitution method."""
+        # Ignore an undefined release version.
         self.dnf_manager.configure_substitution(
-            release_version="123"
+            release_version=""
         )
         self._check_substitutions({
             "arch": "x86_64",
             "basearch": "x86_64",
-            "releasever": "123"
-        })
-
-        self.dnf_manager.reset_substitution()
-        self._check_substitutions({
-            "arch": "x86_64",
-            "basearch": "x86_64",
-            "releasever": "rawhide"
+            "releasever": "123",
+            "releasever_major": "123",
+            "releasever_minor": "",
         })
 
     @patch("dnf.subject.Subject.get_best_query")
@@ -836,16 +823,6 @@ class DNFManagerCompsTestCase(unittest.TestCase):
 
         assert self.dnf_manager.resolve_environment("e1") == "e1"
         assert self.dnf_manager.resolve_environment("e2") is None
-
-    def test_is_environment_valid(self):
-        """Test the is_environment_valid method."""
-        assert self.dnf_manager.is_environment_valid("") is False
-        assert self.dnf_manager.is_environment_valid("e1") is False
-
-        self._add_environment("e1")
-
-        assert self.dnf_manager.is_environment_valid("e1") is True
-        assert self.dnf_manager.is_environment_valid("e2") is False
 
     def test_get_environment_data_error(self):
         """Test the failed get_environment_data method."""
@@ -1202,24 +1179,6 @@ class DNFManagerReposTestCase(unittest.TestCase):
         self._check_repo("r1", [
             "baseurl = http://u2",
         ])
-
-    def test_remove_repository(self):
-        """Test the remove_repository method."""
-        assert self.dnf_manager.repositories == []
-
-        self._add_repo("r1")
-        self._add_repo("r2")
-
-        assert self.dnf_manager.repositories == ["r1", "r2"]
-
-        self.dnf_manager.remove_repository("r1")
-        assert self.dnf_manager.repositories == ["r2"]
-
-        self.dnf_manager.remove_repository("r3")
-        assert self.dnf_manager.repositories == ["r2"]
-
-        self.dnf_manager.remove_repository("r2")
-        assert self.dnf_manager.repositories == []
 
     def test_generate_repo_file_baseurl(self):
         """Test the generate_repo_file method with baseurl."""

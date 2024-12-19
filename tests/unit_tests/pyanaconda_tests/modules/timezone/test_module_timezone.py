@@ -18,23 +18,42 @@
 # Red Hat Author(s): Vendula Poncova <vponcova@redhat.com>
 #
 import unittest
+from collections import OrderedDict
+from unittest.mock import MagicMock, patch
 
 from dasbus.structure import compare_data
 from dasbus.typing import *  # pylint: disable=wildcard-import
 
-from pyanaconda.core.constants import TIME_SOURCE_SERVER, TIME_SOURCE_POOL
+from pyanaconda.core.constants import (
+    TIME_SOURCE_POOL,
+    TIME_SOURCE_SERVER,
+    TIMEZONE_PRIORITY_DEFAULT,
+    TIMEZONE_PRIORITY_GEOLOCATION,
+    TIMEZONE_PRIORITY_KICKSTART,
+    TIMEZONE_PRIORITY_LANGUAGE,
+    TIMEZONE_PRIORITY_USER,
+)
 from pyanaconda.modules.common.constants.services import TIMEZONE
 from pyanaconda.modules.common.structures.requirement import Requirement
-from pyanaconda.modules.common.structures.timezone import TimeSourceData
-from pyanaconda.modules.timezone.installation import ConfigureHardwareClockTask, \
-    ConfigureNTPTask, ConfigureTimezoneTask
-from pyanaconda.modules.common.structures.kickstart import KickstartReport
-from pyanaconda.modules.common.structures.timezone import GeolocationData
+from pyanaconda.modules.common.structures.timezone import (
+    GeolocationData,
+    TimeSourceData,
+)
+from pyanaconda.modules.timezone.initialization import GeolocationTask
+from pyanaconda.modules.timezone.installation import (
+    ConfigureHardwareClockTask,
+    ConfigureNTPTask,
+    ConfigureTimezoneTask,
+)
 from pyanaconda.modules.timezone.timezone import TimezoneService
 from pyanaconda.modules.timezone.timezone_interface import TimezoneInterface
-from pyanaconda.modules.timezone.initialization import GeolocationTask
-from tests.unit_tests.pyanaconda_tests import check_kickstart_interface, \
-    patch_dbus_publish_object, check_task_creation_list, check_dbus_property
+from pyanaconda.timezone import get_timezone
+from tests.unit_tests.pyanaconda_tests import (
+    check_dbus_property,
+    check_kickstart_interface,
+    check_task_creation_list,
+    patch_dbus_publish_object,
+)
 
 
 class TimezoneInterfaceTestCase(unittest.TestCase):
@@ -99,6 +118,50 @@ class TimezoneInterfaceTestCase(unittest.TestCase):
             [server, pool]
         )
 
+    def test_timezone_priority_constants(self):
+        """Test the timezone priority constants are in correct order."""
+        # assert order of priorities is correct AND nothing equals
+        assert TIMEZONE_PRIORITY_DEFAULT \
+               < TIMEZONE_PRIORITY_LANGUAGE \
+               < TIMEZONE_PRIORITY_GEOLOCATION \
+               < TIMEZONE_PRIORITY_KICKSTART \
+               < TIMEZONE_PRIORITY_USER
+
+    def test_timezone_priority(self):
+        """Test the SetTimezoneWithPriority function."""
+        # initialize priority to a low value, which is impossible via the interface as other
+        # tests set just Timezone which uses the highest priority
+        self.timezone_module._timezone = "Default/Default"
+        self.timezone_module._priority = TIMEZONE_PRIORITY_DEFAULT
+        assert self.timezone_interface.Timezone == "Default/Default"  # as initialized
+        # check higher priority overwrites
+        self.timezone_interface.SetTimezoneWithPriority(
+            "Language/Spoke",
+            TIMEZONE_PRIORITY_LANGUAGE
+        )
+        assert self.timezone_interface.Timezone == "Language/Spoke"
+        # check same priority overwrites
+        self.timezone_interface.SetTimezoneWithPriority(
+            "More/Lang",
+            TIMEZONE_PRIORITY_LANGUAGE
+        )
+        assert self.timezone_interface.Timezone == "More/Lang"
+        # check lower priority does not overwrite
+        self.timezone_interface.SetTimezoneWithPriority(
+            "Back/To/Defaults",
+            TIMEZONE_PRIORITY_DEFAULT
+        )
+        assert self.timezone_interface.Timezone == "More/Lang"
+        # check that the unprioritized property uses the highest priority
+        # order of constants is guaranteed by testing elsewhere
+        self.timezone_interface.Timezone = "Highest"
+        assert self.timezone_interface.Timezone == "Highest"
+        self.timezone_interface.SetTimezoneWithPriority(
+            "Kick/Start",
+            TIMEZONE_PRIORITY_KICKSTART
+        )
+        assert self.timezone_interface.Timezone == "Highest"
+
     def _test_kickstart(self, ks_in, ks_out):
         check_kickstart_interface(self.timezone_interface, ks_in, ks_out)
 
@@ -128,27 +191,14 @@ class TimezoneInterfaceTestCase(unittest.TestCase):
         """
         self._test_kickstart(ks_in, ks_out)
 
-    def test_kickstart2(self):
-        """Test the timezone command with flags."""
+    def test_kickstart_utc(self):
+        """Test the timezone command with the UTC flag."""
         ks_in = """
-        timezone --utc --nontp Europe/Prague
-        """
-        ks_out = """
-        timesource --ntp-disable
-        # System timezone
         timezone Europe/Prague --utc
         """
-        self._test_kickstart(ks_in, ks_out)
-
-    def test_kickstart3(self):
-        """Test the timezone command with ntp servers."""
-        ks_in = """
-        timezone --ntpservers ntp.cesnet.cz Europe/Prague
-        """
         ks_out = """
-        timesource --ntp-server=ntp.cesnet.cz
         # System timezone
-        timezone Europe/Prague
+        timezone Europe/Prague --utc
         """
         self._test_kickstart(ks_in, ks_out)
 
@@ -201,23 +251,6 @@ class TimezoneInterfaceTestCase(unittest.TestCase):
         ks_out = """
         timesource --ntp-server=ntp.cesnet.cz
         timesource --ntp-pool=0.fedora.pool.ntp.org
-        """
-        self._test_kickstart(ks_in, ks_out)
-
-    def test_kickstart_timezone_timesource(self):
-        """Test the combination of timezone and timesource commands."""
-        ks_in = """
-        timezone --ntpservers ntp.cesnet.cz,0.fedora.pool.ntp.org Europe/Prague
-        timesource --ntp-server ntp.cesnet.cz --nts
-        timesource --ntp-pool 0.fedora.pool.ntp.org
-        """
-        ks_out = """
-        timesource --ntp-server=ntp.cesnet.cz
-        timesource --ntp-server=0.fedora.pool.ntp.org
-        timesource --ntp-server=ntp.cesnet.cz --nts
-        timesource --ntp-pool=0.fedora.pool.ntp.org
-        # System timezone
-        timezone Europe/Prague
         """
         self._test_kickstart(ks_in, ks_out)
 
@@ -306,17 +339,6 @@ class TimezoneInterfaceTestCase(unittest.TestCase):
         assert compare_data(obj.implementation._ntp_servers[0], server)
         assert compare_data(obj.implementation._ntp_servers[1], pool)
 
-    def test_deprecated_warnings(self):
-        response = self.timezone_interface.ReadKickstart("timezone --isUtc Europe/Bratislava")
-        report = KickstartReport.from_structure(response)
-
-        warning = "The option --isUtc will be deprecated in future releases. " \
-                  "Please modify your kickstart file to replace this option with " \
-                  "its preferred alias --utc."
-
-        assert len(report.warning_messages) == 1
-        assert report.warning_messages[0].message == warning
-
     @patch_dbus_publish_object
     def test_geoloc_interface(self, publisher):
         """Test geolocation-related interface and implementation of Timezone"""
@@ -332,3 +354,42 @@ class TimezoneInterfaceTestCase(unittest.TestCase):
         result = GeolocationData.from_values(territory="", timezone="")
         self.timezone_module._set_geolocation_result(result)
         assert self.timezone_module.geolocation_result == result
+
+    @patch("pyanaconda.modules.timezone.timezone.get_all_regions_and_timezones")
+    def test_get_timezones(self, get_all_tz):
+        """Test getting a listing of all valid timezones."""
+        get_all_tz.return_value = OrderedDict([("foo", {"bar", "baz"})])
+        # as the timezones for a region are listed as a set, we need to be a bit careful
+        # when comparing the results
+        result = self.timezone_interface.GetAllValidTimezones()
+        assert list(result.keys()) == ["foo"]
+        assert sorted(result["foo"]) == ['bar', 'baz']
+        get_all_tz.assert_called_once()
+
+    @patch("pyanaconda.modules.timezone.timezone.datetime")
+    def test_get_system_date_time(self, fake_datetime):
+        """Test getting system date and time."""
+        # use a non-default timezone
+        self.timezone_module._timezone = "Antarctica/South_Pole"
+        # fake date object returned by now() call
+        fake_date = MagicMock()
+        fake_date.isoformat.return_value = "2023-06-22T18:49:36.878200"
+
+        def fake_now(value):
+            assert value == get_timezone("Antarctica/South_Pole")
+            return fake_date
+
+        fake_datetime.datetime.now.side_effect = fake_now
+        assert self.timezone_interface.GetSystemDateTime() == "2023-06-22T18:49:36.878200"
+        fake_date.isoformat.assert_called_once()
+
+    @patch("pyanaconda.modules.timezone.timezone.set_system_date_time")
+    def test_set_system_date_time(self, fake_set_time):
+        """Test setting system date and time."""
+        self.timezone_interface.SetSystemDateTime("2023-06-22T18:49:36.878200")
+        fake_set_time.assert_called_once_with(year=2023,
+                                              month=6,
+                                              day=22,
+                                              hour=18,
+                                              minute=49,
+                                              tz="America/New_York")

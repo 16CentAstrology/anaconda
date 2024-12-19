@@ -19,12 +19,16 @@
 #
 from pyanaconda.anaconda_loggers import get_module_logger
 from pyanaconda.core.i18n import _
-from pyanaconda.modules.common.structures.rpm_ostree import RPMOSTreeContainerConfigurationData
+from pyanaconda.modules.common.structures.rpm_ostree import (
+    RPMOSTreeContainerConfigurationData,
+)
 from pyanaconda.modules.payloads.constants import SourceType
-from pyanaconda.modules.payloads.source.rpm_ostree.rpm_ostree import \
-    RPMOSTreeSourceModule
-from pyanaconda.modules.payloads.source.rpm_ostree_container.rpm_ostree_container_interface import \
-    RPMOSTreeContainerSourceInterface
+from pyanaconda.modules.payloads.source.rpm_ostree.rpm_ostree import (
+    RPMOSTreeSourceModule,
+)
+from pyanaconda.modules.payloads.source.rpm_ostree_container.rpm_ostree_container_interface import (
+    RPMOSTreeContainerSourceInterface,
+)
 
 log = get_module_logger(__name__)
 
@@ -69,10 +73,10 @@ class RPMOSTreeContainerSourceModule(RPMOSTreeSourceModule):
         """Process the kickstart data."""
         configuration = RPMOSTreeContainerConfigurationData()
 
-        configuration.stateroot = data.ostreecontainer.stateroot
-        configuration.url = data.ostreecontainer.url
-        configuration.remote = data.ostreecontainer.remote
-        configuration.transport = data.ostreecontainer.transport
+        configuration.stateroot = data.ostreecontainer.stateroot or ""
+        configuration.url = data.ostreecontainer.url or ""
+        configuration.remote = data.ostreecontainer.remote or ""
+        configuration.transport = data.ostreecontainer.transport or ""
         configuration.signature_verification_enabled = not data.ostreecontainer.noSignatureVerification
 
         self.set_configuration(configuration)

@@ -1,5 +1,34 @@
 {% if distro_release == "rawhide" %}
-# Run kickstart tests in a PR triggered by a "/kickstart-test <launch args>" comment from an organization member.
+# Run kickstart tests in a PR triggered by a comment from an organization member.
+#
+# /kickstart-test keyboard lang
+# ... run the tests specified by names (space separated)
+#
+# /kickstart-test --skip-testtypes gh123,gh765 keyboard lang
+# ... run the tests specified by names while skipping tests with given types (comma separated)
+#
+# /kickstart-test --testtype network
+# ... run all the tests of type network
+#
+# /kickstart-test --testtype network --skip-testtypes gh123,gh765
+# ... run all the tests of type network while skipping tests with given types (comma separated)
+#
+# /kickstart-test --skip-testtypes gh123,gh765
+# ... run all the tests while skipping tests with given types (comma separated)
+#
+# By default all disabled tests are skipped.
+# To force running disabled tests use --force option.
+#
+# /kickstart-test --force rpm-ostree
+# ... run rpm-ostree test even if it is disabled
+#
+#
+# It is possible to run updated tests via a PR in kickstart-tests repository
+#
+# /kickstart-test --kstest-pr 1233 --testtype harddrive
+# ... run the tests of type harddrive with
+# https://github.com/rhinstaller/kickstart-tests/pull/1233 update of kickstart tests
+
 name: kickstart-tests
 on:
   issue_comment:
@@ -40,52 +69,39 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Parse launch arguments
-        id: parse_launch_args
+      - name: Parse comment arguments
+        id: parse_comment_args
         # Do not use comment body directly in the shell command to avoid possible code injection.
         env:
           BODY: ${{ github.event.comment.body }}
         run: |
           # extract first line and cut out the "/kickstart-tests" first word
-          LAUNCH_ARGS=$(echo "$BODY" | sed -n '1 s/^[^ ]* *//p')
-          echo "launch arguments are: $LAUNCH_ARGS"
-          echo "launch_args=${LAUNCH_ARGS}" >> $GITHUB_OUTPUT
-
-      - name: Set KS test arguments
-        id: ks_test_args
-        run: |
-          set -eux
-          TARGET_BRANCH="${{ fromJson(steps.pr_api.outputs.data).base.ref }}"
-
-          if [ "$TARGET_BRANCH" == "master" ]; then
-            echo "skip_tests=skip-on-fedora" >> $GITHUB_OUTPUT
-            echo "platform=fedora_rawhide" >> $GITHUB_OUTPUT
-          elif echo "$TARGET_BRANCH" | grep -qE "fedora-[[:digit:]]+$"; then
-            echo "skip_tests=skip-on-fedora" >> $GITHUB_OUTPUT
-            echo "platform=fedora_rawhide" >> $GITHUB_OUTPUT
-          elif echo "$TARGET_BRANCH" | grep -qE "rhel-8(\.[[:digit:]]+)?$"; then
-            echo "skip_tests=skip-on-rhel,skip-on-rhel-8" >> $GITHUB_OUTPUT
-            echo "platform=rhel8" >> $GITHUB_OUTPUT
-          elif echo "$TARGET_BRANCH" | grep -qE "rhel-9(\.[[:digit:]]+)?$"; then
-            echo "skip_tests=skip-on-rhel,skip-on-rhel-9" >> $GITHUB_OUTPUT
-            echo "platform=rhel9" >> $GITHUB_OUTPUT
-          else
-            echo "Branch $TARGET_BRANCH is not supported by kickstart tests yet!"
-            exit 1
-          fi
+          ARGS=$(echo "$BODY" | sed -n '1 s/^[^ ]* *//p' | sed 's/[[:space:]]*$//')
+          # parse --kstest-pr option
+          OPTS="$(getopt -q -o "" --long kstest-pr: -- $ARGS)" || true
+          PR=${OPTS#" --kstest-pr '"}
+          PR=$(echo $PR | cut -d " " -f1)
+          PR=${PR%"'"}
+          PR=${PR%"--"}
+          # remove --kstest-pr option
+          ARGS=$(echo "$ARGS" | sed -r -e "s#--kstest-pr( +|=)$PR ##" | sed 's/[[:space:]]*$//')
+          echo "test selection arguments are: $ARGS"
+          echo "comment_args=${ARGS}" >> $GITHUB_OUTPUT
+          echo "kickstart-tests PR: $PR"
+          echo "kstest_pr=${PR}" >> $GITHUB_OUTPUT
 
     outputs:
       allowed_user: ${{ steps.check_user_perm.outputs.allowed_user }}
       base_ref: ${{ fromJson(steps.pr_api.outputs.data).base.ref }}
       sha: ${{ fromJson(steps.pr_api.outputs.data).head.sha }}
-      launch_args: ${{ steps.parse_launch_args.outputs.launch_args }}
-      skip_tests: ${{ steps.ks_test_args.outputs.skip_tests }}
-      platform: ${{ steps.ks_test_args.outputs.platform }}
+      comment_args: ${{ steps.parse_comment_args.outputs.comment_args }}
+      target_branch: ${{ fromJson(steps.pr_api.outputs.data).base.ref }}
+      kstest_pr: ${{ steps.parse_comment_args.outputs.kstest_pr }}
 
   run:
     needs: pr-info
     # only do this for Fedora for now; once we have RHEL 8/9 boot.iso builds working, also support these
-    if: needs.pr-info.outputs.allowed_user == 'true' && needs.pr-info.outputs.launch_args != '' && ! contains(github.event.comment.body, '--waive')
+    if: needs.pr-info.outputs.allowed_user == 'true' && needs.pr-info.outputs.comment_args != '' && ! contains(github.event.comment.body, '--waive')
     runs-on: [self-hosted, kstest]
     timeout-minutes: 300
     env:
@@ -94,7 +110,6 @@ jobs:
        CONTAINER_TAG: 'lorax'
        ISO_BUILD_CONTAINER_NAME: 'quay.io/rhinstaller/anaconda-iso-creator'
        RPM_BUILD_CONTAINER_NAME: 'quay.io/rhinstaller/anaconda-rpm'
-       SKIP_KS_TESTS: ${{ needs.pr-info.outputs.skip_tests }}
        TEST_JOBS: 16
     steps:
       # we post statuses manually as this does not run from a pull_request event
@@ -103,7 +118,7 @@ jobs:
         uses: octokit/request-action@v2.x
         with:
           route: 'POST /repos/${{ github.repository }}/statuses/${{ needs.pr-info.outputs.sha }}'
-          context: '${{ env.STATUS_NAME }} ${{ needs.pr-info.outputs.launch_args }}'
+          context: '${{ env.STATUS_NAME }} ${{ needs.pr-info.outputs.comment_args }}'
           description: 'gathering repositories [${{ runner.name }}]'
           state: pending
           target_url: 'https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}'
@@ -119,7 +134,7 @@ jobs:
           sudo rm -rf * .git
 
       - name: Clone repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           ref: ${{ needs.pr-info.outputs.sha }}
           fetch-depth: 0
@@ -134,27 +149,62 @@ jobs:
           git rebase origin/${{ env.TARGET_BRANCH }}
 
       - name: Check out kickstart-tests
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           repository: rhinstaller/kickstart-tests
+          fetch-depth: 0
           path: kickstart-tests
+
+      - name: Pull the request and rebase to the upstream target
+        working-directory: ./kickstart-tests
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -n "${{ needs.pr-info.outputs.kstest_pr }}" ]; then
+              gh pr checkout ${{ needs.pr-info.outputs.kstest_pr }}
+              BASE_REF=$(gh pr view --json baseRefName --template '{{.baseRefName}}' ${{ needs.pr-info.outputs.kstest_pr }})
+              git config user.name github-actions
+              git config user.email github-actions@github.com
+              git log --oneline -1 $BASE_REF
+              git rebase $BASE_REF
+              echo "Rebasing PR ${{ needs.pr-info.outputs.kstest_pr }} to upstream $BASE_REF"
+          fi
 
       - name: Generate test cases
         working-directory: ./kickstart-tests
         run: scripts/generate-testcases.py -t ./testlib/test_cases/kstest-template.tc.yaml.j2 . -o ./testlib/test_cases
 
       - name: Clone Permian repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           repository: rhinstaller/permian
           path: permian
           ref: main
 
       - name: Clone tplib repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           repository: rhinstaller/tplib
           path: tplib
+
+      - name: Generate test selection for branch "${{ needs.pr-info.outputs.target_branch }}"
+        id: generate_query
+        working-directory: ./kickstart-tests
+        run: |
+          LAUNCH_ARGS=$(scripts/generate-launch-args.py ${{ needs.pr-info.outputs.comment_args }} \
+             --branch ${{ needs.pr-info.outputs.target_branch }} ) || RC=$?
+          if [ -z ${RC} ] || [ ${RC} == 0 ]; then
+            echo "Generated launch arguments: $LAUNCH_ARGS"
+          else
+            echo "Generating of the arguments failed. See the workflow file for usage."
+            exit 1
+          fi
+          PERMIAN_QUERY=$(scripts/generate-permian-query.py $LAUNCH_ARGS)
+          echo "Generated permian query: $PERMIAN_QUERY"
+          echo "query=$PERMIAN_QUERY" >> $GITHUB_OUTPUT
+          PLATFORM=$(scripts/generate-permian-query.py --print-platform $LAUNCH_ARGS)
+          echo "Generated platform: $PLATFORM"
+          echo "platform=$PLATFORM" >> $GITHUB_OUTPUT
 
       - name: Ensure http proxy is running
         run: sudo kickstart-tests/containers/squid.sh start
@@ -175,7 +225,7 @@ jobs:
         uses: octokit/request-action@v2.x
         with:
           route: 'POST /repos/${{ github.repository }}/statuses/${{ needs.pr-info.outputs.sha }}'
-          context: '${{ env.STATUS_NAME }} ${{ needs.pr-info.outputs.launch_args }}'
+          context: '${{ env.STATUS_NAME }} ${{ needs.pr-info.outputs.comment_args }}'
           description: 'building artifacts [${{ runner.name }}]'
           state: pending
           target_url: 'https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}'
@@ -219,26 +269,12 @@ jobs:
           sudo podman rmi -f $ISO_BUILD_CONTAINER_NAME:$CONTAINER_TAG || true
           sudo podman rmi -f $RPM_BUILD_CONTAINER_NAME:$CONTAINER_TAG || true
 
-      - name: Generate query arguments for "${{ needs.pr-info.outputs.launch_args }}"
-        id: generate_query
-        working-directory: ./kickstart-tests
-        run: |
-          set -eux
-          PERMIAN_QUERY=$(scripts/generate-permian-query.py \
-             --skip-testtypes ${{ needs.pr-info.outputs.skip_tests }} \
-             ${{ needs.pr-info.outputs.launch_args }} )
-          if [ $? == 0 ]; then
-            echo "query=$PERMIAN_QUERY" >> $GITHUB_OUTPUT
-          else
-            echo "Parsing of the request arguments failed"
-            exit 1
-          fi
-
       - name: Create Permian settings file
         working-directory: ./permian
         run: |
           cat <<EOF > settings.ini
           [kickstart_test]
+          retry_on_failure=True
           kstest_local_repo=${{ github.workspace }}/kickstart-tests
           [library]
           directPath=${{ github.workspace }}/kickstart-tests/testlib
@@ -248,7 +284,7 @@ jobs:
         uses: octokit/request-action@v2.x
         with:
           route: 'POST /repos/${{ github.repository }}/statuses/${{ needs.pr-info.outputs.sha }}'
-          context: '${{ env.STATUS_NAME }} ${{ needs.pr-info.outputs.launch_args }}'
+          context: '${{ env.STATUS_NAME }} ${{ needs.pr-info.outputs.comment_args }}'
           description: 'running tests [${{ runner.name }}]'
           state: pending
           target_url: 'https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}'
@@ -271,39 +307,10 @@ jobs:
                 "point_person":"rvykydal@redhat.com"
               },
               "bootIso":{"x86_64":"file://${{ github.workspace }}/images/boot.iso"},
-              "kstestParams":{"platform":"${{ needs.pr-info.outputs.platform }}"}
+              "kstestParams":{"platform":"${{ steps.generate_query.outputs.platform }}"}
             }'
 
-      # Needed so that other jobs are able to clean the working dir
-      # FIXME: we should investigate running permian/launch sudo-less
-      - name: Make artefacts created by sudo cleanable
-        run:
-          sudo chown -R github:github .
-
-      - name: Collect anaconda logs
-        if: always()
-        uses: actions/upload-artifact@v3
-        with:
-          name: 'logs'
-          # skip the /anaconda subdirectories, too large
-          path: |
-            kickstart-tests/data/logs/kstest.log
-            kickstart-tests/data/logs/kstest-*/*.log
-            kickstart-tests/data/additional_repo/*.rpm
-
-      - name: Collect Permian logs
-        if: always()
-        uses: actions/upload-artifact@v2
-        with:
-          name: 'logs-permian'
-          path: |
-            permian/permian.log
-
-
-      # Permian hides the exit code of launcher
-      - name: Pass the launch script exit code
-        working-directory: ./permian
-        run: |
+          # Permian hides the exit code of launcher, so error out this step manually based on logs
           rc=$( awk '/Runner return code: /{ print $4 }' permian.log)
           if [ -n "$rc" ]; then
             exit $rc
@@ -311,12 +318,33 @@ jobs:
             exit 111
           fi
 
+      # Needed so that other jobs are able to clean the working dir
+      # FIXME: we should investigate running permian/launch sudo-less
+      - name: Make artefacts created by sudo cleanable
+        if: always()
+        run:
+          sudo chown -R github:github .
+
+      - name: Collect logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: 'logs'
+          # skip the /anaconda subdirectories, too large
+          path: |
+            kickstart-tests/data/logs/kstest*.log
+            kickstart-tests/data/logs/kstest-*/*.log
+            kickstart-tests/data/logs/kstest-*/original-ks.cfg
+            kickstart-tests/data/logs/kstest-list-substituted/
+            kickstart-tests/data/additional_repo/*.rpm
+            permian/permian.log
+
       - name: Set result status
         if: always()
         uses: octokit/request-action@v2.x
         with:
           route: 'POST /repos/${{ github.repository }}/statuses/${{ needs.pr-info.outputs.sha }}'
-          context: '${{ env.STATUS_NAME }} ${{ needs.pr-info.outputs.launch_args }}'
+          context: '${{ env.STATUS_NAME }} ${{ needs.pr-info.outputs.comment_args }}'
           description: 'finished [${{ runner.name }}]'
           state: ${{ job.status }}
           target_url: 'https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}'
@@ -334,7 +362,7 @@ jobs:
         env:
           BODY: ${{ github.event.comment.body }}
         run: |
-          REASON=$(echo "$BODY" | sed -e "s#/kickstart-test --waive ##")
+          REASON=$(echo "$BODY" | sed -e "s#/kickstart-test --waive ##" | sed 's/[[:space:]]*$//')
           echo "reason=Waived, $REASON" >> $GITHUB_OUTPUT
 
       - name: Set status

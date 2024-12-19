@@ -17,41 +17,56 @@
 #
 # Red Hat Author(s): Radek Vykydal <rvykydal@redhat.com>
 #
-import unittest
-import tempfile
 import os
 import shutil
-import pytest
-
+import tempfile
+import unittest
 from textwrap import dedent
-from unittest.mock import patch, Mock
+from unittest.mock import Mock, patch
 
+import gi
+import pytest
 from dasbus.signal import Signal
+from dasbus.typing import *  # pylint: disable=wildcard-import
 
-from tests.unit_tests.pyanaconda_tests import patch_dbus_publish_object, check_dbus_property, \
-    check_kickstart_interface, check_task_creation, PropertiesChangedCallback
-
-from pyanaconda.core.constants import FIREWALL_DEFAULT, FIREWALL_ENABLED, \
-        FIREWALL_DISABLED, FIREWALL_USE_SYSTEM_DEFAULTS
+from pyanaconda.core.constants import (
+    FIREWALL_DEFAULT,
+    FIREWALL_DISABLED,
+    FIREWALL_ENABLED,
+    FIREWALL_USE_SYSTEM_DEFAULTS,
+    NETWORK_CAPABILITY_TEAM,
+)
 from pyanaconda.core.kernel import KernelArguments
-from pyanaconda.modules.common.constants.services import NETWORK
 from pyanaconda.modules.common.constants.objects import FIREWALL
-from pyanaconda.modules.common.errors.installation import FirewallConfigurationError, \
-    NetworkInstallationError
-from pyanaconda.modules.network.network import NetworkService
-from pyanaconda.modules.network.network_interface import NetworkInterface
+from pyanaconda.modules.common.constants.services import NETWORK
+from pyanaconda.modules.common.errors.installation import (
+    FirewallConfigurationError,
+    NetworkInstallationError,
+)
 from pyanaconda.modules.network.constants import FirewallMode
-from pyanaconda.modules.network.installation import NetworkInstallationTask, \
-    ConfigureActivationOnBootTask, HostnameConfigurationTask
 from pyanaconda.modules.network.firewall.firewall import FirewallModule
 from pyanaconda.modules.network.firewall.firewall_interface import FirewallInterface
 from pyanaconda.modules.network.firewall.installation import ConfigureFirewallTask
+from pyanaconda.modules.network.initialization import (
+    ApplyKickstartTask,
+    DumpMissingConfigFilesTask,
+)
+from pyanaconda.modules.network.installation import (
+    ConfigureActivationOnBootTask,
+    HostnameConfigurationTask,
+    NetworkInstallationTask,
+)
 from pyanaconda.modules.network.kickstart import DEFAULT_DEVICE_SPECIFICATION
-from dasbus.typing import *  # pylint: disable=wildcard-import
-from pyanaconda.modules.network.initialization import ApplyKickstartTask, \
-    DumpMissingConfigFilesTask
+from pyanaconda.modules.network.network import NetworkService
+from pyanaconda.modules.network.network_interface import NetworkInterface
+from tests.unit_tests.pyanaconda_tests import (
+    PropertiesChangedCallback,
+    check_dbus_property,
+    check_kickstart_interface,
+    check_task_creation,
+    patch_dbus_publish_object,
+)
 
-import gi
 gi.require_version("NM", "1.0")
 from gi.repository import NM
 
@@ -60,13 +75,28 @@ class MockedNMClient():
     def __init__(self):
         self.state = NM.State.DISCONNECTED
         self.state_callback = None
+        self.capabilities = []
+        self.capabilities_callback = None
+
     def _connect_state_changed(self, callback):
         self.state_callback = callback
+
     def _set_state(self, state):
         self.state = state
         self.state_callback(state)
+
     def get_state(self):
         return self.state
+
+    def _connect_capabilities_changed(self, callback):
+        self.capabilities_callback = callback
+
+    def _set_capabilities(self, caps):
+        self.capabilities = caps
+        self.capabilities_callback(caps)
+
+    def get_capabilities(self):
+        return self.capabilities
 
 
 class NetworkInterfaceTestCase(unittest.TestCase):
@@ -100,6 +130,7 @@ class NetworkInterfaceTestCase(unittest.TestCase):
     def test_set_locale(self, mocked_os, setlocale):
         """Test setting locale of the module."""
         from locale import LC_ALL
+
         import pyanaconda.core.util
         locale = "en_US.UTF-8"
         mocked_os.environ = {}
@@ -210,6 +241,25 @@ class NetworkInterfaceTestCase(unittest.TestCase):
         assert self.network_interface.Connected
         self.callback.assert_called_with(NETWORK.interface_name, {'Connected': True}, [])
         assert not self.network_interface.IsConnecting()
+
+    def test_capabilities_default(self):
+        """Test getting capabilities does not fail."""
+        assert self.network_interface.Capabilities == []
+
+    def test_capabilities(self):
+        """Test capabilities property with mocked NMClient."""
+        nm_client = MockedNMClient()
+        nm_client._connect_capabilities_changed(self.network_module._nm_capabilities_changed)
+        self.network_module.nm_client = nm_client
+
+        nm_client._set_capabilities([NM.Capability.TEAM, NM.Capability.OVS])
+        assert self.network_interface.Capabilities == [NETWORK_CAPABILITY_TEAM]
+
+        nm_client._set_capabilities([])
+        assert self.network_interface.Capabilities == []
+
+        self.network_module.nm_client = None
+        assert self.network_interface.Capabilities == []
 
     def test_nm_availability(self):
         self.network_module.nm_client = None
@@ -1268,6 +1318,45 @@ class InstallationTaskTestCase(unittest.TestCase):
                 self._systemd_network_dir,
                 self._dhclient_dir,
             ]
+        )
+
+    def test_network_instalation_ignore_ifname_nbft(self):
+        """Test the task for network installation with an ifname=nbft* argument."""
+
+        self._create_all_expected_dirs()
+
+        # Create files that will be copied from installer
+        # No files
+
+        # Create files existing on target system (could be used to test overwrite
+        # parameter.
+        # No files
+
+        # Create the task
+        task = NetworkInstallationTask(
+            sysroot=self._target_root,
+            disable_ipv6=True,
+            overwrite=True,
+            network_ifaces=["ens3", "ens7", "nbft0"],
+            ifname_option_values=["ens3:00:15:17:96:75:0a",
+                                  "nbft0:00:15:17:96:75:0b"],
+            # Perhaps does not make sense together with ifname option, but for
+            # test it is fine
+            configure_persistent_device_names=True,
+        )
+        self._mock_task_paths(task)
+        task.run()
+        content_template = NetworkInstallationTask.INTERFACE_RENAME_FILE_CONTENT_TEMPLATE
+        self._check_config_file(
+            self._systemd_network_dir,
+            "10-anaconda-ifname-ens3.link",
+            content_template.format("00:15:17:96:75:0a", "ens3")
+        )
+        # nbft* devices should be ignored when renaming devices based on
+        # ifname= option
+        self._check_config_file_does_not_exist(
+            self._systemd_network_dir,
+            "10-anaconda-ifname-nbft0.link"
         )
 
     def test_network_instalation_task_no_src_files(self):

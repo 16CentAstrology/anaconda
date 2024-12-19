@@ -18,6 +18,7 @@
 #  Author(s):  Vendula Poncova <vponcova@redhat.com>
 #
 from enum import Enum
+
 from pyanaconda.core.configuration.base import Section
 
 
@@ -71,6 +72,11 @@ class SystemSection(Section):
     @property
     def can_start_user_systemd(self):
         """Can we start the user instance of systemd?"""
+        return self._is_boot_iso
+
+    @property
+    def can_start_compositor(self):
+        """Can we start our own Wayland session?"""
         return self._is_boot_iso
 
     @property
@@ -128,11 +134,6 @@ class SystemSection(Section):
         return self._is_boot_iso or self._is_live_os or self._is_booted_os
 
     @property
-    def can_run_on_xwayland(self):
-        """Could we run on XWayland?"""
-        return self._is_live_os
-
-    @property
     def can_modify_syslog(self):
         """Can we modify syslog?"""
         return self._is_boot_iso or self._is_booted_os
@@ -168,6 +169,11 @@ class SystemSection(Section):
         return self._is_boot_iso or self._is_live_os or self._is_booted_os
 
     @property
+    def provides_resolver_config(self):
+        """Can we copy /etc/resolv.conf to the target system?"""
+        return self._is_boot_iso
+
+    @property
     def provides_liveuser(self):
         """Is the user `liveuser` available?"""
         return self._is_live_os
@@ -176,3 +182,8 @@ class SystemSection(Section):
     def can_use_driver_disks(self):
         """Can the system use driver disks?"""
         return self._is_boot_iso
+
+    @property
+    def supports_web_ui(self):
+        """Can we run Web UI on this system?"""
+        return self._is_boot_iso or self._is_live_os

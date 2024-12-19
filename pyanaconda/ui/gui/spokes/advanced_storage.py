@@ -18,28 +18,34 @@
 #
 from collections import namedtuple
 
+import gi
 from blivet.size import Size
 
 from pyanaconda.anaconda_loggers import get_module_logger
 from pyanaconda.core.i18n import CN_, CP_
-from pyanaconda.modules.common.structures.storage import DeviceData
-from pyanaconda.ui.lib.storage import apply_disk_selection, try_populate_devicetree, \
-    filter_disks_by_names
-from pyanaconda.modules.common.constants.objects import DISK_SELECTION, FCOE, ISCSI, DASD, \
-    DEVICE_TREE
+from pyanaconda.modules.common.constants.objects import (
+    DASD,
+    DEVICE_TREE,
+    DISK_SELECTION,
+    FCOE,
+    ISCSI,
+)
 from pyanaconda.modules.common.constants.services import STORAGE
-
-from pyanaconda.ui.gui.utils import timed_action, really_show, really_hide
+from pyanaconda.modules.common.structures.storage import DeviceData
+from pyanaconda.ui.categories.system import SystemCategory
 from pyanaconda.ui.gui.spokes import NormalSpoke
+from pyanaconda.ui.gui.spokes.advstorage.dasd import DASDDialog
 from pyanaconda.ui.gui.spokes.advstorage.fcoe import FCoEDialog
 from pyanaconda.ui.gui.spokes.advstorage.iscsi import ISCSIDialog
 from pyanaconda.ui.gui.spokes.advstorage.zfcp import ZFCPDialog
-from pyanaconda.ui.gui.spokes.advstorage.dasd import DASDDialog
-from pyanaconda.ui.gui.spokes.advstorage.nvdimm import NVDIMMDialog
 from pyanaconda.ui.gui.spokes.lib.cart import SelectedDisksDialog
-from pyanaconda.ui.categories.system import SystemCategory
+from pyanaconda.ui.gui.utils import really_hide, really_show, timed_action
+from pyanaconda.ui.lib.storage import (
+    apply_disk_selection,
+    filter_disks_by_names,
+    try_populate_devicetree,
+)
 
-import gi
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk
 
@@ -50,15 +56,19 @@ __all__ = ["FilterSpoke"]
 PAGE_SEARCH = 0
 PAGE_MULTIPATH = 1
 PAGE_OTHER = 2
-PAGE_NVDIMM = 3
+PAGE_NVMEFABRICS = 3
 PAGE_Z = 4
+# The Z page must be last = highest number, because it is dynamically removed, which would reorder
+# the items and invalidate the indices hardcoded here.
 
 DiskStoreRow = namedtuple("DiskStoreRow", [
     "visible", "selected", "mutable",
-    "name", "type", "model", "capacity",
+    "name", "device_id", "type", "model", "capacity",
     "vendor", "interconnect", "serial",
     "wwid", "paths", "port", "target",
-    "lun", "ccw", "wwpn", "namespace", "mode"
+    "lun", "ccw", "wwpn", "namespace", "mode",
+    "controllers", "transport", "transport_address",
+    "subsystem_nqn", "namespace_id"
 ])
 
 
@@ -70,30 +80,45 @@ def create_row(device_data, selected, mutable):
     :param mutable: False if the device is protected, otherwise True
     :return: an instance of DiskStoreRow
     """
+    device = device_data
+    attrs = device_data.attrs
+
+    controller_ids = attrs.get("controllers-id", "").split(", ")
+    transports_type = attrs.get("transports-type", "").split(", ")
+    transports_address = attrs.get("transports-address", "").split(", ")
+    subsystems_nqn = attrs.get("subsystems-nqn", "").split(", ")
+    namespace_ids = list(filter(None, map(attrs.get, ["eui64", "nguid", "uuid"])))
+
     return DiskStoreRow(
         visible=True,
         selected=selected,
-        mutable=mutable and not device_data.protected,
-        name=device_data.name,
-        type=device_data.type,
-        model=device_data.attrs.get("model", ""),
-        capacity=str(Size(device_data.size)),
-        vendor=device_data.attrs.get("vendor", ""),
-        interconnect=device_data.attrs.get("bus", ""),
-        serial=device_data.attrs.get("serial", ""),
-        wwid=device_data.attrs.get("path-id", ""),
-        paths="\n".join(device_data.parents),
-        port=device_data.attrs.get("port", ""),
-        target=device_data.attrs.get("target", ""),
-        lun=device_data.attrs.get("lun", "") or device_data.attrs.get("fcp-lun", ""),
-        ccw=device_data.attrs.get("hba-id", ""),
-        wwpn=device_data.attrs.get("wwpn", ""),
-        namespace=device_data.attrs.get("namespace", ""),
-        mode=device_data.attrs.get("mode", "")
+        mutable=mutable and not device.protected,
+        name=device.name,
+        device_id=device.device_id,
+        type=device.type,
+        model=attrs.get("model", ""),
+        capacity=str(Size(device.size)),
+        vendor=attrs.get("vendor", ""),
+        interconnect=attrs.get("bus", ""),
+        serial=attrs.get("serial", ""),
+        wwid=attrs.get("path-id", ""),
+        paths="\n".join(device.parents),
+        port=attrs.get("port", ""),
+        target=attrs.get("target", ""),
+        lun=attrs.get("lun", "") or attrs.get("fcp-lun", ""),
+        ccw=attrs.get("hba-id", ""),
+        wwpn=attrs.get("wwpn", ""),
+        namespace=attrs.get("namespace", "") or attrs.get("nsid", ""),
+        mode=attrs.get("mode", ""),
+        controllers="\n".join(controller_ids),
+        transport="\n".join(transports_type),
+        transport_address="\n".join(transports_address),
+        subsystem_nqn="\n".join(subsystems_nqn),
+        namespace_id="\n".join(namespace_ids),
     )
 
 
-class FilterPage(object):
+class FilterPage:
     """A FilterPage is the logic behind one of the notebook tabs on the filter
        UI spoke.  Each page has its own specific filtered model overlaid on top
        of a common model that holds all non-advanced disks.
@@ -343,7 +368,7 @@ class OtherPage(FilterPage):
         self._vendor_combo = self._builder.get_object("otherVendorCombo")
 
     def is_member(self, device_type):
-        return device_type == "iscsi" or device_type == "fcoe"
+        return device_type in ("iscsi", "fcoe")
 
     def setup(self, store, disks, selected_names, protected_names):
         vendors = set()
@@ -400,7 +425,7 @@ class ZPage(FilterPage):
         self._wwpn_entry.set_text("")
 
     def is_member(self, device_type):
-        return device_type == "zfcp" or device_type == "dasd"
+        return device_type in ("zfcp", "dasd")
 
     def setup(self, store, disks, selected_names, protected_names):
         """ Set up our Z-page, but only if we're running on s390x. """
@@ -431,60 +456,64 @@ class ZPage(FilterPage):
         return False
 
 
-class NvdimmPage(FilterPage):
-    # Match these to nvdimmTypeCombo ids in glade
-    SEARCH_TYPE_NAMESPACE = 'Namespace'
-    SEARCH_TYPE_MODE = 'Mode'
+class NVMeFabricsPage(FilterPage):
+    # Match these to nvmefTypeCombo ids in glade
+    SEARCH_TYPE_CONTROLLER = 'Controller'
+    SEARCH_TYPE_TRANSPORT = 'Transport'
+    SEARCH_TYPE_SUBSYSTEM_NQN = 'Subsystem NQN'
+    SEARCH_TYPE_NAMESPACE_ID = 'Namespace ID'
 
     def __init__(self, builder):
-        super().__init__(builder, "nvdimmModel", "nvdimmTypeCombo")
-        self._tree_view = self._builder.get_object("nvdimmTreeView")
-        self._mode_combo = self._builder.get_object("nvdimmModeCombo")
-        self._namespace_entry = self._builder.get_object("nvdimmNamespaceEntry")
+        super().__init__(builder, "nvmefModel", "nvmefTypeCombo")
+        self._controller_entry = self._builder.get_object("nvmefControllerEntry")
+        self._transport_combo = self._builder.get_object("nvmefTransportCombo")
+        self._address_entry = self._builder.get_object("nvmefTransportAddressEntry")
+        self._subsystem_nqn_entry = self._builder.get_object("nvmefSubsystemNqnEntry")
+        self._namespace_id_entry = self._builder.get_object("nvmefNamespaceIdEntry")
 
     def is_member(self, device_type):
-        return device_type == "nvdimm"
+        return device_type == "nvme-fabrics"
 
     def setup(self, store, disks, selected_names, protected_names):
-        modes = set()
+        transports = set()
 
         for device_data in disks:
-            mode = device_data.attrs.get("mode")
             row = create_row(
                 device_data,
-                device_data.name in selected_names and mode == "sector",
-                device_data.name not in protected_names or mode != "sector",
+                device_data.name in selected_names,
+                device_data.name not in protected_names,
             )
-
             store.append([*row])
-            modes.add(mode)
+            transports.update(row.transport.split("\n"))
 
-        self._setup_combo(self._mode_combo, modes)
+        self._setup_combo(self._transport_combo, transports)
+        self._transport_combo.set_active(0)
         self._setup_search_type()
 
     def clear(self):
-        self._mode_combo.set_active(0)
-        self._namespace_entry.set_text("")
+        self._controller_entry.set_text("")
+        self._transport_combo.set_active(0)
+        self._address_entry.set_text("")
+        self._subsystem_nqn_entry.set_text("")
+        self._namespace_id_entry.set_text("")
 
     def _filter_func(self, filter_by, row):
-        if filter_by == self.SEARCH_TYPE_MODE:
-            return self._mode_combo.get_active_text() == row.mode
+        if filter_by == self.SEARCH_TYPE_CONTROLLER:
+            return self._controller_entry.get_text().strip() in row.controllers
 
-        if filter_by == self.SEARCH_TYPE_NAMESPACE:
-            return self._namespace_entry.get_text().strip() in row.namespace
+        if filter_by == self.SEARCH_TYPE_TRANSPORT:
+            transports = [""] + row.transport.split("\n")
+
+            return self._transport_combo.get_active_text() in transports \
+                and self._address_entry.get_text().strip() in row.transport_address
+
+        if filter_by == self.SEARCH_TYPE_SUBSYSTEM_NQN:
+            return self._subsystem_nqn_entry.get_text().strip() in row.subsystem_nqn
+
+        if filter_by == self.SEARCH_TYPE_NAMESPACE_ID:
+            return self._namespace_id_entry.get_text().strip() in row.namespace_id
 
         return False
-
-    def get_selected_namespaces(self):
-        namespaces = []
-        selection = self._tree_view.get_selection()
-        store, path_list = selection.get_selected_rows()
-
-        for path in path_list:
-            store_row = DiskStoreRow(*store[store.get_iter(path)])
-            namespaces.append(store_row.namespace)
-
-        return namespaces
 
 
 class FilterSpoke(NormalSpoke):
@@ -493,7 +522,7 @@ class FilterSpoke(NormalSpoke):
           :parts: 3
     """
     builderObjects = ["diskStore", "filterWindow",
-                      "searchModel", "multipathModel", "otherModel", "zModel", "nvdimmModel"]
+                      "searchModel", "multipathModel", "otherModel", "zModel", "nvmefModel"]
     mainWidgetName = "filterWindow"
     uiFile = "spokes/advanced_storage.glade"
     category = SystemCategory
@@ -520,7 +549,6 @@ class FilterSpoke(NormalSpoke):
 
         self._notebook = self.builder.get_object("advancedNotebook")
         self._store = self.builder.get_object("diskStore")
-        self._reconfigure_nvdimm_button = self.builder.get_object("reconfigureNVDIMMButton")
 
     @property
     def indirect(self):
@@ -542,7 +570,7 @@ class FilterSpoke(NormalSpoke):
             PAGE_SEARCH: SearchPage(self.builder),
             PAGE_MULTIPATH: MultipathPage(self.builder),
             PAGE_OTHER: OtherPage(self.builder),
-            PAGE_NVDIMM: NvdimmPage(self.builder),
+            PAGE_NVMEFABRICS: NVMeFabricsPage(self.builder),
             PAGE_Z: ZPage(self.builder),
         }
 
@@ -559,9 +587,6 @@ class FilterSpoke(NormalSpoke):
         if not STORAGE.get_proxy(ISCSI).IsSupported():
             self.builder.get_object("addISCSIButton").destroy()
 
-        # The button is sensitive only on NVDIMM page
-        self._reconfigure_nvdimm_button.set_sensitive(False)
-
         # report that we are done
         self.initialize_done()
 
@@ -569,7 +594,7 @@ class FilterSpoke(NormalSpoke):
         super().refresh()
 
         # Reset the scheduled partitioning if any to make sure that we
-        # are working with the current system’s storage configuration.
+        # are working with the current system's storage configuration.
         # FIXME: Change modules and UI to work with the right device tree.
         self._storage_module.ResetPartitioning()
 
@@ -586,8 +611,8 @@ class FilterSpoke(NormalSpoke):
         self._store.clear()
 
         disks_data = DeviceData.from_structure_list([
-            self._device_tree.GetDeviceData(device_name)
-            for device_name in self._disks
+            self._device_tree.GetDeviceData(device_id)
+            for device_id in self._disks
         ])
 
         for page in self._pages.values():
@@ -651,7 +676,7 @@ class FilterSpoke(NormalSpoke):
         if icon_pos == Gtk.EntryIconPosition.SECONDARY:
             entry.set_text("")
 
-    def on_page_switched(self, notebook, new_page, new_page_num, *args):
+    def on_page_switched(self, notebook, _new_page, new_page_num, *args):
         # Disable all filters.
         for page in self._pages.values():
             page.is_active = False
@@ -665,7 +690,6 @@ class FilterSpoke(NormalSpoke):
 
         # Set up the UI.
         notebook.get_nth_page(new_page_num).show_all()
-        self._reconfigure_nvdimm_button.set_sensitive(new_page_num == 3)
 
     def on_row_toggled(self, button, path):
         if not path:
@@ -677,10 +701,10 @@ class FilterSpoke(NormalSpoke):
         itr = filter_model.convert_iter_to_child_iter(model_itr)
         self._store[itr][1] = not self._store[itr][1]
 
-        if self._store[itr][1] and self._store[itr][3] not in self._selected_disks:
-            self._selected_disks.append(self._store[itr][3])
-        elif not self._store[itr][1] and self._store[itr][3] in self._selected_disks:
-            self._selected_disks.remove(self._store[itr][3])
+        if self._store[itr][1] and self._store[itr][4] not in self._selected_disks:
+            self._selected_disks.append(self._store[itr][4])
+        elif not self._store[itr][1] and self._store[itr][4] in self._selected_disks:
+            self._selected_disks.remove(self._store[itr][4])
 
         self._update_summary()
 
@@ -710,12 +734,6 @@ class FilterSpoke(NormalSpoke):
         dialog = DASDDialog(self.data)
         self._run_dialog_and_refresh(dialog)
 
-    def on_reconfigure_nvdimm_clicked(self, widget, *args):
-        log.debug("Reconfigure a NVDIMM device.")
-        namespaces = self._pages[PAGE_NVDIMM].get_selected_namespaces()
-        dialog = NVDIMMDialog(self.data, namespaces)
-        self._run_dialog_and_refresh(dialog)
-
     def _run_dialog_and_refresh(self, dialog):
         # Run the dialog.
         with self.main_window.enlightbox(dialog.window):
@@ -742,12 +760,12 @@ class FilterSpoke(NormalSpoke):
         self._set_notebook_page("otherTypeNotebook", combo.get_active())
         self._refilter_current_page()
 
-    def on_nvdimm_type_combo_changed(self, combo):
-        self._set_notebook_page("nvdimmTypeNotebook", combo.get_active())
-        self._refilter_current_page()
-
     def on_z_type_combo_changed(self, combo):
         self._set_notebook_page("zTypeNotebook", combo.get_active())
+        self._refilter_current_page()
+
+    def on_nvmef_type_combo_changed(self, combo):
+        self._set_notebook_page("nvmefTypeNotebook", combo.get_active())
         self._refilter_current_page()
 
     def _set_notebook_page(self, notebook_name, page_index):

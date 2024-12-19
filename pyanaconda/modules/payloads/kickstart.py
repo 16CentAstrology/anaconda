@@ -17,18 +17,37 @@
 # License and may only be used or replicated with the express permission of
 # Red Hat, Inc.
 #
-from pykickstart.parser import Packages, Group
+from pykickstart.constants import (
+    GROUP_ALL,
+    GROUP_DEFAULT,
+    GROUP_REQUIRED,
+    KS_BROKEN_IGNORE,
+    KS_MISSING_IGNORE,
+)
+from pykickstart.parser import Group, Packages
 from pykickstart.sections import PackageSection
-from pykickstart.constants import GROUP_DEFAULT, GROUP_ALL, GROUP_REQUIRED, KS_MISSING_IGNORE, \
-    KS_BROKEN_IGNORE
 
-from pyanaconda.core.constants import URL_TYPE_BASEURL, URL_TYPE_MIRRORLIST, URL_TYPE_METALINK, \
-    DNF_DEFAULT_REPO_COST, REPO_ORIGIN_SYSTEM, REPO_ORIGIN_USER, GROUP_PACKAGE_TYPES_ALL, \
-    GROUP_PACKAGE_TYPES_REQUIRED, RPM_LANGUAGES_NONE, MULTILIB_POLICY_ALL, RPM_LANGUAGES_ALL, \
-    DNF_DEFAULT_TIMEOUT, DNF_DEFAULT_RETRIES
-from pyanaconda.core.kickstart import KickstartSpecification, commands as COMMANDS
-from pyanaconda.modules.common.structures.packages import PackagesSelectionData, \
-    PackagesConfigurationData
+from pyanaconda.core.constants import (
+    DNF_DEFAULT_REPO_COST,
+    DNF_DEFAULT_RETRIES,
+    DNF_DEFAULT_TIMEOUT,
+    GROUP_PACKAGE_TYPES_ALL,
+    GROUP_PACKAGE_TYPES_REQUIRED,
+    MULTILIB_POLICY_ALL,
+    REPO_ORIGIN_SYSTEM,
+    REPO_ORIGIN_USER,
+    RPM_LANGUAGES_ALL,
+    RPM_LANGUAGES_NONE,
+    URL_TYPE_BASEURL,
+    URL_TYPE_METALINK,
+    URL_TYPE_MIRRORLIST,
+)
+from pyanaconda.core.kickstart import KickstartSpecification
+from pyanaconda.core.kickstart import commands as COMMANDS
+from pyanaconda.modules.common.structures.packages import (
+    PackagesConfigurationData,
+    PackagesSelectionData,
+)
 from pyanaconda.modules.common.structures.payload import RepoConfigurationData
 
 
@@ -193,17 +212,6 @@ def convert_ks_data_to_packages_selection(ks_data):
     for group in ks_data.packages.excludedGroupList:
         selection.excluded_groups.append(group.name)
 
-    for module in ks_data.module.dataList():
-        name = module.name
-
-        if module.stream:
-            name += ":" + module.stream
-
-        if module.enable:
-            selection.modules.append(name)
-        else:
-            selection.disabled_modules.append(name)
-
     return selection
 
 
@@ -248,30 +256,6 @@ def convert_packages_selection_to_ksdata(selection, ks_data):
         )
         ks_data.packages.excludedGroupList.append(ks_group)
 
-    for name in selection.modules:
-        ks_module = create_ks_module(name)
-        ks_data.module.dataList().append(ks_module)
-
-    for name in selection.disabled_modules:
-        ks_module = create_ks_module(name, enabled=False)
-        ks_data.module.dataList().append(ks_module)
-
-
-def create_ks_module(name, enabled=True):
-    """Create a new instance of a kickstart module.
-
-    :param name: a name of the module
-    :param enabled: True if the module is enabled, otherwise False
-    :return: a kickstart module object
-    """
-    names = name.split(":", maxsplit=1) + [""]
-
-    return COMMANDS.ModuleData(
-        name=names[0],
-        stream=names[1],
-        enable=enabled,
-    )
-
 
 def create_ks_group(name, include=GROUP_DEFAULT):
     """Create a new instance of a kickstart group.
@@ -302,6 +286,7 @@ class PayloadKickstartSpecification(KickstartSpecification):
     commands_data = {
         "ModuleData": COMMANDS.ModuleData,
         "RepoData": COMMANDS.RepoData,
+
     }
 
     sections = {

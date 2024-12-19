@@ -16,40 +16,60 @@
 # Red Hat, Inc.
 #
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from dasbus.structure import compare_data
 
-from pyanaconda.modules.common.structures.comps import CompsEnvironmentData, CompsGroupData
+from pyanaconda.modules.common.structures.comps import (
+    CompsEnvironmentData,
+    CompsGroupData,
+)
 from pyanaconda.modules.common.structures.packages import PackagesSelectionData
+from pyanaconda.modules.payloads.payload.dnf.dnf import DNFModule
 from pyanaconda.modules.payloads.payload.dnf.dnf_manager import DNFManager
-from pyanaconda.ui.lib.software import is_software_selection_complete, \
-    get_software_selection_status, SoftwareSelectionCache
+from pyanaconda.ui.lib.software import (
+    KernelFeatures,
+    SoftwareSelectionCache,
+    get_available_kernel_features,
+    get_kernel_from_properties,
+    get_software_selection_status,
+    is_software_selection_complete,
+)
+
+
+def get_dnf_proxy(dnf_manager):
+    """Create a DNF payload proxy using the specified DNF manager."""
+    dnf_module = DNFModule()
+    dnf_module._dnf_manager = dnf_manager
+    return dnf_module.for_publication()
 
 
 class SoftwareSelectionUITestCase(unittest.TestCase):
     """Test the helper functions of the Software Selection spoke."""
+
+    def setUp(self):
+        self.dnf_manager = Mock(spec=DNFManager)
+        self.dnf_proxy = get_dnf_proxy(self.dnf_manager)
 
     def test_is_software_selection_complete(self):
         """Test the is_software_selection_complete function."""
         selection = PackagesSelectionData()
         selection.environment = "e1"
 
-        dnf_manager = Mock(spec=DNFManager)
-        dnf_manager.is_environment_valid.return_value = True
+        self.dnf_manager.resolve_environment.return_value = "e1"
 
-        assert is_software_selection_complete(dnf_manager, selection)
-        assert is_software_selection_complete(dnf_manager, selection, kickstarted=True)
+        assert is_software_selection_complete(self.dnf_proxy, selection)
+        assert is_software_selection_complete(self.dnf_proxy, selection, kickstarted=True)
 
-        dnf_manager.is_environment_valid.return_value = False
+        self.dnf_manager.resolve_environment.return_value = None
 
-        assert not is_software_selection_complete(dnf_manager, selection)
-        assert not is_software_selection_complete(dnf_manager, selection, kickstarted=True)
+        assert not is_software_selection_complete(self.dnf_proxy, selection)
+        assert not is_software_selection_complete(self.dnf_proxy, selection, kickstarted=True)
 
         selection.environment = ""
 
-        assert not is_software_selection_complete(dnf_manager, selection)
-        assert is_software_selection_complete(dnf_manager, selection, kickstarted=True)
+        assert not is_software_selection_complete(self.dnf_proxy, selection)
+        assert is_software_selection_complete(self.dnf_proxy, selection, kickstarted=True)
 
     def test_get_software_selection_status(self):
         """Test the get_software_selection_status function."""
@@ -59,31 +79,59 @@ class SoftwareSelectionUITestCase(unittest.TestCase):
         environment_data = CompsEnvironmentData()
         environment_data.name = "The e1 environment"
 
-        dnf_manager = Mock(spec=DNFManager)
-        dnf_manager.is_environment_valid.return_value = True
-        dnf_manager.get_environment_data.return_value = environment_data
+        self.dnf_manager.resolve_environment.return_value = "e1"
+        self.dnf_manager.get_environment_data.return_value = environment_data
 
-        status = get_software_selection_status(dnf_manager, selection)
+        status = get_software_selection_status(self.dnf_proxy, selection)
         assert status == "The e1 environment"
 
-        status = get_software_selection_status(dnf_manager, selection, kickstarted=True)
+        status = get_software_selection_status(self.dnf_proxy, selection, kickstarted=True)
         assert status == "The e1 environment"
 
-        dnf_manager.is_environment_valid.return_value = False
+        self.dnf_manager.resolve_environment.return_value = None
 
-        status = get_software_selection_status(dnf_manager, selection)
+        status = get_software_selection_status(self.dnf_proxy, selection)
         assert status == "Selected environment is not valid"
 
-        status = get_software_selection_status(dnf_manager, selection, kickstarted=True)
+        status = get_software_selection_status(self.dnf_proxy, selection, kickstarted=True)
         assert status == "Invalid environment specified in kickstart"
 
         selection.environment = ""
 
-        status = get_software_selection_status(dnf_manager, selection)
+        status = get_software_selection_status(self.dnf_proxy, selection)
         assert status == "Please confirm software selection"
 
-        status = get_software_selection_status(dnf_manager, selection, kickstarted=True)
+        status = get_software_selection_status(self.dnf_proxy, selection, kickstarted=True)
         assert status == "Custom software selected"
+
+    def test_get_kernel_from_properties(self):
+        """Test if kernel features are translated to corrent package names."""
+        assert get_kernel_from_properties(
+            KernelFeatures(page_size_64k=False)) is None
+        assert get_kernel_from_properties(
+            KernelFeatures(page_size_64k=True)) == "kernel-64k"
+
+    @patch("pyanaconda.ui.lib.software.is_aarch64")
+    def test_get_available_kernel_features(self, is_aarch64):
+        """test availability of kernel packages"""
+        self.dnf_manager.match_available_packages.return_value = \
+            ["kernel-64k-5.14.0-408.el9.aarch64.rpm"]
+
+        is_aarch64.return_value = False
+        res = get_available_kernel_features(self.dnf_proxy)
+        assert isinstance(res, dict)
+        assert len(res) > 0
+        assert not res["64k"]
+        is_aarch64.assert_called_once()
+
+        is_aarch64.return_value = True
+        assert is_aarch64()
+        res = get_available_kernel_features(self.dnf_proxy)
+        assert res["64k"]
+
+        self.dnf_manager.match_available_packages.return_value = []
+        res = get_available_kernel_features(self.dnf_proxy)
+        assert not res["64k"]
 
 
 class SoftwareSelectionCacheTestCase(unittest.TestCase):
@@ -96,14 +144,12 @@ class SoftwareSelectionCacheTestCase(unittest.TestCase):
         self.environment_data.optional_groups = ["g1", "g2", "g3", "g4", "g5"]
 
         self.dnf_manager = Mock(spec=DNFManager)
-
         self.dnf_manager.resolve_environment.return_value = True
         self.dnf_manager.get_environment_data.return_value = self.environment_data
-
         self.dnf_manager.get_group_data.side_effect = self._get_group_data
         self.dnf_manager.resolve_group.return_value = True
 
-        self.cache = SoftwareSelectionCache(self.dnf_manager)
+        self.cache = SoftwareSelectionCache(get_dnf_proxy(self.dnf_manager))
 
     def _get_group_data(self, group):
         """Mock the get_group_data method of the DNF manager."""

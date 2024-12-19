@@ -25,10 +25,12 @@ from pyanaconda.modules.common.constants.interfaces import PAYLOAD_SOURCE_REPOSI
 from pyanaconda.modules.common.errors.general import InvalidValueError
 from pyanaconda.modules.common.errors.payload import SourceSetupError
 from pyanaconda.modules.common.structures.payload import RepoConfigurationData
-from pyanaconda.modules.payloads.constants import SourceType, SourceState
+from pyanaconda.modules.payloads.constants import SourceState, SourceType
 from pyanaconda.modules.payloads.source.mount_tasks import TearDownMountTask
-from pyanaconda.modules.payloads.source.nfs.initialization import SetUpNFSSourceTask, \
-    SetUpNFSSourceResult
+from pyanaconda.modules.payloads.source.nfs.initialization import (
+    SetUpNFSSourceResult,
+    SetUpNFSSourceTask,
+)
 from pyanaconda.modules.payloads.source.nfs.nfs import NFSSourceModule
 from tests.unit_tests.pyanaconda_tests import check_dbus_property
 
@@ -142,7 +144,7 @@ class NFSSourceTestCase(unittest.TestCase):
         with pytest.raises(InvalidValueError) as cm:
             self.module.set_configuration(configuration)
 
-        assert str(cm.value) == "Invalid protocol of a NFS source: 'cdrom'"
+        assert str(cm.value) == "Invalid protocol of an NFS source: 'cdrom'"
 
     def test_configuration_invalid_url_type(self):
         """Test the source configuration with an invalid URL type."""
@@ -153,7 +155,7 @@ class NFSSourceTestCase(unittest.TestCase):
         with pytest.raises(InvalidValueError) as cm:
             self.module.set_configuration(configuration)
 
-        assert str(cm.value) == "Invalid URL type of a NFS source: 'MIRRORLIST'"
+        assert str(cm.value) == "Invalid URL type of an NFS source: 'MIRRORLIST'"
 
     def test_repository_configuration(self):
         """Test the repository configuration."""
@@ -187,7 +189,7 @@ class NFSSourceSetupTaskTestCase(unittest.TestCase):
         )
         result = task.run()
 
-        assert task.name == "Set up a NFS source"
+        assert task.name == "Set up an NFS source"
         assert isinstance(result, SetUpNFSSourceResult)
         assert isinstance(result.repository, RepoConfigurationData)
         assert result.repository.url == expected

@@ -16,14 +16,14 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
+from pyanaconda.anaconda_loggers import get_module_logger
 from pyanaconda.core.constants import ANACONDA_ENVIRON
 
-from pyanaconda.anaconda_loggers import get_module_logger
 log = get_module_logger(__name__)
 
 
 # A lot of effort, but it only allows a limited set of flags to be referenced
-class Flags(object):
+class Flags:
     def __setattr__(self, attr, val):
         # pylint: disable=no-member
         if attr not in self.__dict__ and not self._in_init:
@@ -33,8 +33,9 @@ class Flags(object):
 
     def __init__(self):
         self.__dict__['_in_init'] = True
-        self.usevnc = False
-        self.vncquestion = True
+        self.use_rd = False
+        self.rd_question = True
+        self.preexisting_wayland = False
         self.preexisting_x11 = False
         self.automatedInstall = False
         self.eject = True

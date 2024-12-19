@@ -15,15 +15,15 @@
 # License and may only be used or replicated with the express permission of
 # Red Hat, Inc.
 #
+from pyanaconda.anaconda_loggers import get_module_logger
 from pyanaconda.modules.storage import platform
 
-from pyanaconda.anaconda_loggers import get_module_logger
 log = get_module_logger(__name__)
 
 __all__ = ["BootLoaderFactory"]
 
 
-class BootLoaderFactory(object):
+class BootLoaderFactory:
     """The boot loader factory."""
 
     # The default boot loader class.
@@ -94,7 +94,9 @@ class BootLoaderFactory(object):
         if name == "SDBOOT":
             platform_class = platform.platform.__class__
             if platform_class is platform.Aarch64EFI:
-                from pyanaconda.modules.storage.bootloader.efi import Aarch64EFISystemdBoot
+                from pyanaconda.modules.storage.bootloader.efi import (
+                    Aarch64EFISystemdBoot,
+                )
                 return Aarch64EFISystemdBoot
             if platform_class is platform.EFI:
                 from pyanaconda.modules.storage.bootloader.efi import X64EFISystemdBoot
@@ -124,10 +126,6 @@ class BootLoaderFactory(object):
             from pyanaconda.modules.storage.bootloader.efi import EFIGRUB
             return EFIGRUB
 
-        if platform_class is platform.MacEFI:
-            from pyanaconda.modules.storage.bootloader.efi import MacEFIGRUB
-            return MacEFIGRUB
-
         if platform_class is platform.PPC:
             from pyanaconda.modules.storage.bootloader.grub2 import GRUB2
             return GRUB2
@@ -155,5 +153,13 @@ class BootLoaderFactory(object):
         if platform_class is platform.ArmEFI:
             from pyanaconda.modules.storage.bootloader.efi import ArmEFIGRUB
             return ArmEFIGRUB
+
+        if platform_class is platform.RISCV64:
+            from pyanaconda.modules.storage.bootloader.extlinux import EXTLINUX
+            return EXTLINUX
+
+        if platform_class is platform.RISCV64EFI:
+            from pyanaconda.modules.storage.bootloader.efi import RISCV64EFIGRUB
+            return RISCV64EFIGRUB
 
         return None

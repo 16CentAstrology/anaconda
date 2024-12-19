@@ -16,14 +16,13 @@
 # License and may only be used or replicated with the express permission of
 # Red Hat, Inc.
 
+from pyanaconda.anaconda_loggers import get_module_logger
 from pyanaconda.ui import common
 from pyanaconda.ui.gui import GUIObject
-from pyanaconda.ui.lib.help import show_graphical_help_for_screen
 
-from pyanaconda.anaconda_loggers import get_module_logger
 log = get_module_logger(__name__)
 
-__all__ = ["StandaloneSpoke", "NormalSpoke"]
+__all__ = ["NormalSpoke", "StandaloneSpoke"]
 
 
 # Inherit abstract methods from common.StandaloneSpoke
@@ -56,16 +55,8 @@ class NormalSpoke(GUIObject, common.NormalSpoke):
         GUIObject.__init__(self, data)
         common.NormalSpoke.__init__(self, storage, payload)
 
-        # Add a help handler
-        self.window.connect_after("help-button-clicked", self._on_help_clicked)
-
         # warning message
         self._current_warning_message = ""
-
-    def _on_help_clicked(self, window):
-        # the help button has been clicked, start the yelp viewer with
-        # content for the current spoke
-        show_graphical_help_for_screen(self.get_screen_id())
 
     def on_back_clicked(self, button):
         # Notify the hub that we're finished.

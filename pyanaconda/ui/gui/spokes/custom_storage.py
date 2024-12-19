@@ -27,51 +27,100 @@
 # - Activating reformat should always enable resize for existing devices.
 import copy
 
+import gi
 from dasbus.structure import compare_data
 
 from pyanaconda.anaconda_loggers import get_module_logger
 from pyanaconda.core.configuration.anaconda import conf
-from pyanaconda.core.constants import THREAD_EXECUTE_STORAGE, THREAD_STORAGE, \
-    PARTITIONING_METHOD_INTERACTIVE
-from pyanaconda.core.i18n import _, N_, CP_, C_
+from pyanaconda.core.constants import (
+    PARTITIONING_METHOD_INTERACTIVE,
+    THREAD_EXECUTE_STORAGE,
+    THREAD_STORAGE,
+)
+from pyanaconda.core.i18n import C_, CP_, N_, _
+from pyanaconda.core.product import get_product_name, get_product_version
+from pyanaconda.core.storage import (
+    CONTAINER_DEVICE_TYPES,
+    DEVICE_TEXT_MAP,
+    DEVICE_TYPE_BTRFS,
+    DEVICE_TYPE_MD,
+    DEVICE_TYPE_UNSUPPORTED,
+    MOUNTPOINT_DESCRIPTIONS,
+    NAMED_DEVICE_TYPES,
+    PROTECTED_FORMAT_TYPES,
+    Size,
+    device_type_from_autopart,
+)
+from pyanaconda.core.threads import thread_manager
 from pyanaconda.modules.common.constants.objects import BOOTLOADER, DISK_SELECTION
 from pyanaconda.modules.common.constants.services import STORAGE
-from pyanaconda.modules.common.structures.storage import OSData, DeviceFormatData, DeviceData
+from pyanaconda.modules.common.errors.configuration import (
+    BootloaderConfigurationError,
+    StorageConfigurationError,
+)
+from pyanaconda.modules.common.structures.device_factory import (
+    DeviceFactoryPermissions,
+    DeviceFactoryRequest,
+)
+from pyanaconda.modules.common.structures.partitioning import PartitioningRequest
+from pyanaconda.modules.common.structures.storage import (
+    DeviceData,
+    DeviceFormatData,
+    OSData,
+)
 from pyanaconda.modules.common.structures.validation import ValidationReport
 from pyanaconda.modules.common.task import sync_run_task
-from pyanaconda.modules.common.errors.configuration import BootloaderConfigurationError, \
-    StorageConfigurationError
-from pyanaconda.modules.common.structures.partitioning import PartitioningRequest
-from pyanaconda.modules.common.structures.device_factory import DeviceFactoryRequest, \
-    DeviceFactoryPermissions
-from pyanaconda.product import productName, productVersion
-from pyanaconda.ui.lib.storage import create_partitioning, apply_partitioning, \
-    filter_disks_by_names
-from pyanaconda.core.storage import DEVICE_TYPE_UNSUPPORTED, DEVICE_TEXT_MAP, \
-    MOUNTPOINT_DESCRIPTIONS, NAMED_DEVICE_TYPES, CONTAINER_DEVICE_TYPES, device_type_from_autopart, \
-    PROTECTED_FORMAT_TYPES, DEVICE_TYPE_BTRFS, DEVICE_TYPE_MD, Size
-
-from pyanaconda.core.threads import thread_manager
 from pyanaconda.ui.categories.system import SystemCategory
 from pyanaconda.ui.communication import hubQ
 from pyanaconda.ui.gui.spokes import NormalSpoke
-from pyanaconda.ui.gui.spokes.lib.accordion import MountPointSelector, Accordion, Page, \
-    CreateNewPage, UnknownPage
+from pyanaconda.ui.gui.spokes.lib.accordion import (
+    Accordion,
+    CreateNewPage,
+    MountPointSelector,
+    Page,
+    UnknownPage,
+)
 from pyanaconda.ui.gui.spokes.lib.cart import SelectedDisksDialog
-from pyanaconda.ui.gui.spokes.lib.custom_storage_helpers import get_size_from_entry, \
-    get_selected_raid_level, get_default_raid_level, get_container_type, AddDialog,\
-    ConfirmDeleteDialog, DisksDialog, ContainerDialog, NOTEBOOK_LABEL_PAGE, NOTEBOOK_DETAILS_PAGE,\
-    NOTEBOOK_LUKS_PAGE, NOTEBOOK_UNEDITABLE_PAGE, NOTEBOOK_INCOMPLETE_PAGE, NEW_CONTAINER_TEXT,\
-    CONTAINER_TOOLTIP, DESIRED_CAPACITY_ERROR, get_supported_device_raid_levels, \
-    generate_request_description
+from pyanaconda.ui.gui.spokes.lib.custom_storage_helpers import (
+    CONTAINER_TOOLTIP,
+    DESIRED_CAPACITY_ERROR,
+    NEW_CONTAINER_TEXT,
+    NOTEBOOK_DETAILS_PAGE,
+    NOTEBOOK_INCOMPLETE_PAGE,
+    NOTEBOOK_LABEL_PAGE,
+    NOTEBOOK_LUKS_PAGE,
+    NOTEBOOK_UNEDITABLE_PAGE,
+    AddDialog,
+    ConfirmDeleteDialog,
+    ContainerDialog,
+    DisksDialog,
+    generate_request_description,
+    get_container_type,
+    get_default_raid_level,
+    get_selected_raid_level,
+    get_size_from_entry,
+    get_supported_device_raid_levels,
+)
 from pyanaconda.ui.gui.spokes.lib.passphrase import PassphraseDialog
 from pyanaconda.ui.gui.spokes.lib.refresh import RefreshDialog
 from pyanaconda.ui.gui.spokes.lib.summary import ActionSummaryDialog
-from pyanaconda.ui.gui.utils import setViewportBackground, fancy_set_sensitive, ignoreEscape, \
-    really_hide, really_show, timed_action, escape_markup
+from pyanaconda.ui.gui.utils import (
+    escape_markup,
+    fancy_set_sensitive,
+    ignoreEscape,
+    really_hide,
+    really_show,
+    set_password_visibility,
+    setViewportBackground,
+    timed_action,
+)
 from pyanaconda.ui.helpers import StorageCheckHandler
+from pyanaconda.ui.lib.storage import (
+    apply_partitioning,
+    create_partitioning,
+    filter_disks_by_names,
+)
 
-import gi
 gi.require_version("Gtk", "3.0")
 gi.require_version("Gdk", "3.0")
 from gi.repository import Gdk, Gtk
@@ -89,8 +138,7 @@ class CustomPartitioningSpoke(NormalSpoke, StorageCheckHandler):
     builderObjects = ["customStorageWindow", "containerStore", "deviceTypeStore",
                       "partitionStore", "raidStoreFiltered", "raidLevelStore",
                       "addImage", "removeImage", "settingsImage",
-                      "mountPointCompletion", "mountPointStore", "fileSystemStore",
-                      "luksVersionStore"]
+                      "mountPointCompletion", "mountPointStore", "fileSystemStore"]
     mainWidgetName = "customStorageWindow"
     uiFile = "spokes/custom_storage.glade"
     category = SystemCategory
@@ -173,9 +221,6 @@ class CustomPartitioningSpoke(NormalSpoke, StorageCheckHandler):
         self._encryptCheckbox = self.builder.get_object("encryptCheckbox")
         self._fsCombo = self.builder.get_object("fileSystemTypeCombo")
         self._fsStore = self.builder.get_object("fileSystemStore")
-        self._luksCombo = self.builder.get_object("luksVersionCombo")
-        self._luksStore = self.builder.get_object("luksVersionStore")
-        self._luksLabel = self.builder.get_object("luksVersionLabel")
         self._labelEntry = self.builder.get_object("labelEntry")
         self._mountPointEntry = self.builder.get_object("mountPointEntry")
         self._nameEntry = self.builder.get_object("nameEntry")
@@ -381,7 +426,7 @@ class CustomPartitioningSpoke(NormalSpoke, StorageCheckHandler):
             self._pageLabel.set_text(
                 _("When you create mount points for your %(name)s %(version)s "
                   "installation, you'll be able to view their details here.")
-                % {"name": productName, "version": productVersion})
+                % {"name": get_product_name(), "version": get_product_version()})
 
     def _populate_accordion(self):
         # Make sure we start with a clean state.
@@ -436,26 +481,26 @@ class CustomPartitioningSpoke(NormalSpoke, StorageCheckHandler):
         page = Page(root.os_name)
         self._accordion.add_page(page, cb=self.on_page_clicked)
 
-        for mount_point, device_name in root.mount_points.items():
+        for mount_point, device_id in root.mount_points.items():
             selector = MountPointSelector()
             self._update_selector(
                 selector,
-                device_name=device_name,
+                device_id=device_id,
                 root_name=root.os_name,
                 mount_point=mount_point
             )
             page.add_selector(selector, self.on_selector_clicked)
 
-        for device_name in root.devices:
+        for device_id in root.devices:
 
             # Skip devices that already have a selector.
-            if device_name in root.mount_points.values():
+            if device_id in root.mount_points.values():
                 continue
 
             selector = MountPointSelector()
             self._update_selector(
                 selector,
-                device_name=device_name,
+                device_id=device_id,
                 root_name=root.os_name
             )
             page.add_selector(selector, self.on_selector_clicked)
@@ -466,39 +511,40 @@ class CustomPartitioningSpoke(NormalSpoke, StorageCheckHandler):
         page = UnknownPage(_("Unknown"))
         self._accordion.add_page(page, cb=self.on_page_clicked)
 
-        for device_name in sorted(devices):
+        for device_id in sorted(devices):
             selector = MountPointSelector()
-            self._update_selector(selector, device_name)
+            self._update_selector(selector, device_id)
             page.add_selector(selector, self.on_selector_clicked)
 
         page.show_all()
 
-    def _update_selector(self, selector, device_name="", root_name="", mount_point=""):
+    def _update_selector(self, selector, device_id="", root_name="", mount_point=""):
         if not selector:
             return
 
-        if not device_name:
-            device_name = selector.device_name
+        if not device_id:
+            device_id = selector.device_id
 
         if not root_name:
             root_name = selector.root_name
 
         device_data = DeviceData.from_structure(
-            self._device_tree.GetDeviceData(device_name)
+            self._device_tree.GetDeviceData(device_id)
         )
 
         format_data = DeviceFormatData.from_structure(
-            self._device_tree.GetFormatData(device_name)
+            self._device_tree.GetFormatData(device_id)
         )
 
         mount_point = self._get_mount_point_description(
             mount_point, format_data
         )
 
-        selector.props.name = device_name
+        selector.props.name = device_data.name
         selector.props.size = str(Size(device_data.size))
         selector.props.mountpoint = mount_point
         selector.root_name = root_name
+        selector.device_id = device_id
 
     def _get_mount_point_description(self, mount_point, format_data):
         """Generate the selector's mount point description."""
@@ -569,7 +615,8 @@ class CustomPartitioningSpoke(NormalSpoke, StorageCheckHandler):
             return
 
         device_name = selector.device_name
-        if device_name not in self._device_tree.GetDevices():
+        device_id = selector.device_id
+        if device_id not in self._device_tree.GetDevices():
             # just-removed device
             return
 
@@ -655,27 +702,6 @@ class CustomPartitioningSpoke(NormalSpoke, StorageCheckHandler):
             really_show(widget)
 
         self._raidLevelCombo.set_active(index)
-
-    def _populate_luks(self, luks_version):
-        """Set up the LUKS version combo box.
-
-        :param luks_version: a LUKS version or None
-        """
-        # Add the values.
-        self._luksStore.clear()
-        for version in ["luks1", "luks2"]:
-            self._luksStore.append([version])
-
-        # Get the selected value.
-        luks_version = luks_version or self._device_tree.GetDefaultLUKSVersion()
-
-        # Set the selected value.
-        idx = next(
-            i for i, data in enumerate(self._luksCombo.get_model())
-            if data[0] == luks_version
-        )
-        self._luksCombo.set_active(idx)
-        self._update_luks_combo()
 
     def _get_current_device_type(self):
         """ Return integer for type combo selection.
@@ -779,10 +805,11 @@ class CustomPartitioningSpoke(NormalSpoke, StorageCheckHandler):
         self._deviceDescLabel.set_text(description)
 
     def _populate_right_side(self, selector):
+        device_id = selector.device_id
         device_name = selector.device_name
 
         self._request = DeviceFactoryRequest.from_structure(
-            self._device_tree.GenerateDeviceFactoryRequest(device_name)
+            self._device_tree.GenerateDeviceFactoryRequest(device_id)
         )
 
         self._original_request = copy.deepcopy(self._request)
@@ -818,15 +845,14 @@ class CustomPartitioningSpoke(NormalSpoke, StorageCheckHandler):
         self._encryptCheckbox.set_inconsistent(self._request.container_encrypted)
         text = _("The container is encrypted.") if self._request.container_encrypted else ""
         self._encryptCheckbox.set_tooltip_text(text)
-        self._update_luks_combo()
 
         # Set up the filesystem type combo.
-        format_types = self._device_tree.GetFileSystemsForDevice(device_name)
+        format_types = self._device_tree.GetFileSystemsForDevice(device_id)
         self._setup_fstype_combo(self._request.device_type, self._request.format_type, format_types)
         fancy_set_sensitive(self._fsCombo, self._permissions.format_type)
 
         # Set up the device type combo.
-        device_types = self._device_tree.GetDeviceTypesForDevice(device_name)
+        device_types = self._device_tree.GetDeviceTypesForDevice(device_id)
         self._setup_device_type_combo(self._request.device_type, device_types)
         fancy_set_sensitive(self._typeCombo, self._permissions.device_type)
 
@@ -857,7 +883,6 @@ class CustomPartitioningSpoke(NormalSpoke, StorageCheckHandler):
         fancy_set_sensitive(self._raidLevelCombo, self._permissions.device_raid_level)
 
         self._populate_container()
-        self._populate_luks(self._request.luks_version)
 
         self._nameEntry.set_text(self._request.device_name)
         fancy_set_sensitive(self._nameEntry, self._permissions.device_name)
@@ -869,7 +894,7 @@ class CustomPartitioningSpoke(NormalSpoke, StorageCheckHandler):
     ###
 
     def on_key_pressed(self, widget, event, *args):
-        if not event or event and event.type != Gdk.EventType.KEY_RELEASE:
+        if not event or (event and event.type != Gdk.EventType.KEY_RELEASE):
             return
 
         if event.keyval in [Gdk.KEY_Delete, Gdk.KEY_minus]:
@@ -904,8 +929,8 @@ class CustomPartitioningSpoke(NormalSpoke, StorageCheckHandler):
         self._passphrase = dialog.passphrase
 
         # Configure the devices.
-        for device_name in devices:
-            self._device_tree.SetDevicePassphrase(device_name, self._passphrase)
+        for device_id in devices:
+            self._device_tree.SetDevicePassphrase(device_id, self._passphrase)
 
         return True
 
@@ -1040,8 +1065,8 @@ class CustomPartitioningSpoke(NormalSpoke, StorageCheckHandler):
                     self.on_selector_clicked(None, member)
                     break
 
-    def _show_confirmation_dialog(self, root_name, device_name):
-        dialog = ConfirmDeleteDialog(self.data, self._device_tree, root_name, device_name,
+    def _show_confirmation_dialog(self, root_name, device_id):
+        dialog = ConfirmDeleteDialog(self.data, self._device_tree, root_name, device_id,
                                      self._accordion.is_multiselection)
         dialog.refresh()
 
@@ -1086,24 +1111,25 @@ class CustomPartitioningSpoke(NormalSpoke, StorageCheckHandler):
         for selector in self._accordion.selected_items:
             page = self._accordion.page_for_selector(selector)
             device_name = selector.device_name
+            device_id = selector.device_id
             root_name = selector.root_name or page.page_title
             log.debug("Removing device %s from page %s.", device_name, root_name)
 
             # Skip if the device isn't in the device tree.
-            if not self._device_tree.IsDevice(device_name):
+            if not self._device_tree.IsDevice(device_id):
                 log.debug("Device %s isn't in the device tree.", device_name)
                 continue
 
             if root_name == self._os_name:
                 if is_multiselection and not option_checked:
-                    (rc, option_checked) = self._show_confirmation_dialog(root_name, device_name)
+                    (rc, option_checked) = self._show_confirmation_dialog(root_name, device_id)
 
                     if rc != 1:
                         if option_checked:
                             break  # skip evaluation of all other mountpoints
                         continue
 
-                self._device_tree.ResetDevice(device_name)
+                self._device_tree.ResetDevice(device_id)
             else:
                 # This is a device that exists on disk and most likely has data
                 # on it.  Thus, we first need to confirm with the user and then
@@ -1111,7 +1137,7 @@ class CustomPartitioningSpoke(NormalSpoke, StorageCheckHandler):
                 # In multiselection user could confirm once for all next
                 # selections.
                 if not option_checked:
-                    (rc, option_checked) = self._show_confirmation_dialog(root_name, device_name)
+                    (rc, option_checked) = self._show_confirmation_dialog(root_name, device_id)
 
                     if rc != 1:
                         if option_checked:
@@ -1119,32 +1145,36 @@ class CustomPartitioningSpoke(NormalSpoke, StorageCheckHandler):
                         continue
 
                 if is_multiselection or not option_checked:
-                    self._device_tree.DestroyDevice(device_name)
+                    self._device_tree.DestroyDevice(device_id)
                     continue
 
                 # We never want to delete known-shared devs here.
                 # The same rule applies for selected device. If it's shared do not
                 # remove it in other pages when Delete all option is checked.
-                for other_name in self._find_unshared_devices(page):
+                for other_id in self._find_unshared_devices(page):
                     # Skip if the device isn't in the device tree.
-                    if not self._device_tree.IsDevice(other_name):
-                        log.debug("Device %s isn't in the device tree.", other_name)
+                    if not self._device_tree.IsDevice(other_id):
+                        log.debug("Device %s isn't in the device tree.", other_id)
                         continue
 
                     # we only want to delete boot partitions if they're not
                     # shared *and* we have no unknown partitions
                     other_format = DeviceFormatData.from_structure(
-                        self._device_tree.GetFormatData(other_name)
+                        self._device_tree.GetFormatData(other_id)
+                    )
+
+                    other_data = DeviceData.from_structure(
+                        self._device_tree.GetDeviceData(other_id)
                     )
 
                     can_destroy = not self._get_unused_devices() \
                         or other_format.type not in PROTECTED_FORMAT_TYPES
 
                     if not can_destroy:
-                        log.debug("Device %s cannot be removed.", other_name)
+                        log.debug("Device %s cannot be removed.", other_data.name)
                         continue
 
-                    self._device_tree.DestroyDevice(other_name)
+                    self._device_tree.DestroyDevice(other_id)
 
     def _find_unshared_devices(self, page):
         """Get unshared devices of the page."""
@@ -1155,14 +1185,14 @@ class CustomPartitioningSpoke(NormalSpoke, StorageCheckHandler):
                 continue
 
             for s in p.members:
-                other_devices.add(s.device_name)
+                other_devices.add(s.device_id)
 
         unshared_devices = []
         for s in page.members:
-            if s.device_name in other_devices:
+            if s.device_id in other_devices:
                 continue
 
-            unshared_devices.append(s.device_name)
+            unshared_devices.append(s.device_id)
 
         return unshared_devices
 
@@ -1266,7 +1296,6 @@ class CustomPartitioningSpoke(NormalSpoke, StorageCheckHandler):
                 self._encryptCheckbox.set_inconsistent(True)
 
             fancy_set_sensitive(self._encryptCheckbox, self._permissions.device_encrypted)
-            self._update_luks_combo()
 
         # Update the UI.
         self._set_devices_label()
@@ -1390,27 +1419,27 @@ class CustomPartitioningSpoke(NormalSpoke, StorageCheckHandler):
             self._set_page_label_text()
             return
 
-        device_name = self._accordion.current_selector.device_name
+        device_id = self._accordion.current_selector.device_id
         device_data = DeviceData.from_structure(
-            self._device_tree.GetDeviceData(device_name)
+            self._device_tree.GetDeviceData(device_id)
         )
         completeness = ValidationReport.from_structure(
-            self._device_tree.CheckCompleteness(device_name)
+            self._device_tree.CheckCompleteness(device_id)
         )
         description = _(MOUNTPOINT_DESCRIPTIONS.get(device_data.type, ""))
 
-        if self._device_tree.IsDeviceLocked(device_name):
+        if self._device_tree.IsDeviceLocked(device_id):
             self._partitionsNotebook.set_current_page(NOTEBOOK_LUKS_PAGE)
-            self._encryptedDeviceLabel.set_text(device_name)
+            self._encryptedDeviceLabel.set_text(device_data.name)
             self._encryptedDeviceDescLabel.set_text(description)
         elif not completeness.is_valid():
             self._partitionsNotebook.set_current_page(NOTEBOOK_INCOMPLETE_PAGE)
-            self._incompleteDeviceLabel.set_text(device_name)
+            self._incompleteDeviceLabel.set_text(device_data.name)
             self._incompleteDeviceDescLabel.set_text(description)
             self._incompleteDeviceOptionsLabel.set_text(" ".join(completeness.get_messages()))
-        elif not self._device_tree.IsDeviceEditable(device_name):
+        elif not self._device_tree.IsDeviceEditable(device_id):
             self._partitionsNotebook.set_current_page(NOTEBOOK_UNEDITABLE_PAGE)
-            self._uneditableDeviceLabel.set_text(device_name)
+            self._uneditableDeviceLabel.set_text(device_data.name)
             self._uneditableDeviceDescLabel.set_text(description)
         else:
             self._partitionsNotebook.set_current_page(NOTEBOOK_DETAILS_PAGE)
@@ -1492,7 +1521,6 @@ class CustomPartitioningSpoke(NormalSpoke, StorageCheckHandler):
         # Update the UI.
         fancy_set_sensitive(self._labelEntry, self._permissions.label)
         fancy_set_sensitive(self._encryptCheckbox, self._permissions.device_encrypted)
-        self._update_luks_combo()
         fancy_set_sensitive(self._fsCombo, self._permissions.format_type)
         self.on_value_changed()
 
@@ -1521,25 +1549,6 @@ class CustomPartitioningSpoke(NormalSpoke, StorageCheckHandler):
     def on_encrypt_toggled(self, widget):
         self._encryptCheckbox.set_inconsistent(False)
         self._request.device_encrypted = self._encryptCheckbox.get_active()
-        self._populate_luks(self._request.luks_version)
-        self.on_value_changed()
-
-    def _update_luks_combo(self):
-        if self._encryptCheckbox.get_active():
-            really_show(self._luksLabel)
-            really_show(self._luksCombo)
-        else:
-            really_hide(self._luksLabel)
-            really_hide(self._luksCombo)
-
-    def on_luks_version_changed(self, widget):
-        if self._encryptCheckbox.get_active():
-            active_index = self._luksCombo.get_active()
-
-            if active_index != -1:
-                luks_version = self._luksCombo.get_model()[active_index][0]
-                self._request.luks_version = luks_version
-
         self.on_value_changed()
 
     def on_mount_point_changed(self, widget):
@@ -1870,6 +1879,9 @@ class CustomPartitioningSpoke(NormalSpoke, StorageCheckHandler):
         self._applyButton.set_sensitive(False)
 
     def on_unlock_clicked(self, *args):
+        # hide the passphrase during unlocking
+        set_password_visibility(self._passphraseEntry, False)
+
         self._unlock_device(self._accordion.current_selector)
 
     @timed_action(delay=50, threshold=100)
@@ -1881,10 +1893,11 @@ class CustomPartitioningSpoke(NormalSpoke, StorageCheckHandler):
         self.reset_state()
 
         device_name = selector.device_name
+        device_id = selector.device_id
         passphrase = self._passphraseEntry.get_text()
 
         log.info("Trying to unlock device %s.", device_name)
-        unlocked = self._device_tree.UnlockDevice(device_name, passphrase)
+        unlocked = self._device_tree.UnlockDevice(device_id, passphrase)
 
         if not unlocked:
             self._passphraseEntry.set_text("")
@@ -1901,6 +1914,20 @@ class CustomPartitioningSpoke(NormalSpoke, StorageCheckHandler):
 
         self._accordion.clear_current_selector()
         self._do_refresh()
+
+    def on_passphrase_icon_clicked(self, entry, icon_pos, event):
+        """Called by Gtk callback when the icon of a passphrase entry is clicked."""
+        set_password_visibility(entry, not entry.get_visibility())
+
+    def on_passphrase_entry_map(self, entry):
+        """Called when a passphrase entry widget is going to be displayed.
+
+        - Without this the passphrase visibility toggle icon would not be shown.
+        - The passphrase should be hidden every time the entry widget is displayed
+          to avoid showing the passphrase in plain text in case the user previously
+          displayed the passphrase and then left the screen.
+        """
+        set_password_visibility(entry, False)
 
     def on_value_changed(self, *args):
         self._applyButton.set_sensitive(True)

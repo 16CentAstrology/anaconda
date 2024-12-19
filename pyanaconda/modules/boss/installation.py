@@ -15,21 +15,19 @@
 # License and may only be used or replicated with the express permission of
 # Red Hat, Inc.
 #
+import glob
 import os.path
 import shutil
-import glob
 
 from pyanaconda.anaconda_loggers import get_module_logger
 from pyanaconda.core.configuration.anaconda import conf
-from pyanaconda.core.constants import SCREENSHOTS_DIRECTORY
-from pyanaconda.core.path import make_directories, join_paths
+from pyanaconda.core.path import join_paths, make_directories, open_with_perm
 from pyanaconda.core.util import execWithRedirect, restorecon
 from pyanaconda.modules.common.task import Task
 
 log = get_module_logger(__name__)
 
 TARGET_LOG_DIR = "/var/log/anaconda/"
-TARGET_SCREENSHOT_DIR = "/root/anaconda-screenshots/"
 
 
 class CopyLogsTask(Task):
@@ -50,30 +48,12 @@ class CopyLogsTask(Task):
     def run(self):
         """Copy installation logs and other related files, and do necessary operations on them.
 
-        - Copy screenshots
         - Copy logs of all kinds, incl. ks scripts, journal dump, and lorax pkg list
         - Copy input kickstart file
         - Autorelabel everything in the destination
         """
-        self._copy_screenshots()
         self._copy_kickstart()
         self._copy_logs()
-
-    def _copy_screenshots(self):
-        """Copy screenshots from the installation to the target system."""
-        log.info("Copying screenshots from installation.")
-
-        screenshots = glob.glob(SCREENSHOTS_DIRECTORY + "/*.png")
-        if not screenshots:
-            return
-
-        os.makedirs(join_paths(self._sysroot, TARGET_SCREENSHOT_DIR), 0o750, True)
-
-        for screenshot in screenshots:
-            self._copy_file_to_sysroot(
-                screenshot,
-                join_paths(TARGET_SCREENSHOT_DIR, os.path.basename(screenshot))
-            )
 
     def _copy_logs(self):
         """Copy installation logs to the target system"""
@@ -149,7 +129,7 @@ class CopyLogsTask(Task):
     def _dump_journal(self):
         """Dump journal from the installation environment"""
         tempfile = "/tmp/journal.log"
-        with open(tempfile, "w") as logfile:
+        with open_with_perm(tempfile, "w", perm=0o600) as logfile:
             execWithRedirect("journalctl", ["-b"], stdout=logfile, log_output=False)
         self._copy_file_to_sysroot(tempfile, join_paths(TARGET_LOG_DIR, "journal.log"))
 

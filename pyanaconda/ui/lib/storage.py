@@ -19,26 +19,34 @@ import locale
 import re
 
 from blivet.size import Size
-from dasbus.error import DBusError
-
-from dasbus.typing import unwrap_variant
 from dasbus.client.proxy import get_object_path
+from dasbus.error import DBusError
+from dasbus.typing import unwrap_variant
 
 from pyanaconda.anaconda_loggers import get_module_logger
-from pyanaconda.core.configuration.anaconda import conf
-from pyanaconda.core.constants import PARTITIONING_METHOD_AUTOMATIC, BOOTLOADER_DRIVE_UNSET, \
-    PARTITIONING_METHOD_CUSTOM
+from pyanaconda.core.constants import (
+    BOOTLOADER_DRIVE_UNSET,
+    PARTITIONING_METHOD_AUTOMATIC,
+    PARTITIONING_METHOD_CUSTOM,
+)
 from pyanaconda.core.i18n import P_, _
-from pyanaconda.errors import errorHandler as error_handler, ERROR_RAISE
+from pyanaconda.core.storage import device_matches
+from pyanaconda.errors import ERROR_RAISE
+from pyanaconda.errors import errorHandler as error_handler
 from pyanaconda.flags import flags
-from pyanaconda.modules.common.constants.objects import DISK_SELECTION, BOOTLOADER, DEVICE_TREE, \
-    DISK_INITIALIZATION, NVDIMM
+from pyanaconda.modules.common.constants.objects import (
+    BOOTLOADER,
+    DEVICE_TREE,
+    DISK_INITIALIZATION,
+    DISK_SELECTION,
+)
 from pyanaconda.modules.common.constants.services import STORAGE
-from pyanaconda.modules.common.errors.configuration import StorageConfigurationError, \
-    BootloaderConfigurationError
+from pyanaconda.modules.common.errors.configuration import (
+    BootloaderConfigurationError,
+    StorageConfigurationError,
+)
 from pyanaconda.modules.common.structures.validation import ValidationReport
 from pyanaconda.modules.common.task import sync_run_task
-from pyanaconda.core.storage import device_matches
 
 log = get_module_logger(__name__)
 
@@ -323,15 +331,15 @@ def is_local_disk(device_type):
     While technically local disks, zFCP and NVDIMM devices are
     advanced storage and should not be considered local.
 
-    :param device_type: a device type
-    :return: True or False
+    :param str device_type: a device type
+    :return bool: True or False
     """
     return device_type not in (
         "dm-multipath",
         "iscsi",
         "fcoe",
         "zfcp",
-        "nvdimm"
+        "nvme-fabrics",
     )
 
 
@@ -363,25 +371,6 @@ def size_from_input(input_str, units=None):
     return size
 
 
-def ignore_nvdimm_blockdevs():
-    """Add nvdimm devices to be ignored to the ignored disks."""
-    if conf.target.is_directory:
-        return
-
-    nvdimm_proxy = STORAGE.get_proxy(NVDIMM)
-    ignored_nvdimm_devs = nvdimm_proxy.GetDevicesToIgnore()
-
-    if not ignored_nvdimm_devs:
-        return
-
-    log.debug("Adding NVDIMM devices %s to ignored disks", ",".join(ignored_nvdimm_devs))
-
-    disk_select_proxy = STORAGE.get_proxy(DISK_SELECTION)
-    ignored_disks = disk_select_proxy.IgnoredDisks
-    ignored_disks.extend(ignored_nvdimm_devs)
-    disk_select_proxy.IgnoredDisks = ignored_disks
-
-
 def ignore_oemdrv_disks():
     """Ignore disks labeled OEMDRV."""
     matched = device_matches("LABEL=OEMDRV", disks_only=True)
@@ -396,11 +385,11 @@ def ignore_oemdrv_disks():
             disk_select_proxy.IgnoredDisks = ignored_disks
 
 
-def filter_disks_by_names(disks, names):
-    """Filter disks by the given names.
+def filter_disks_by_names(disks, disk_ids):
+    """Filter disks by the given disk_ids.
 
-    :param disks: a list of disks name
-    :param names: a list of names to filter
-    :return: a list of filtered disk names
+    :param disks: a list of disks IDs
+    :param disk_ids: a list of disk_IDs to filter
+    :return: a list of filtered disk IDs
     """
-    return list(filter(lambda name: name in disks, names))
+    return list(filter(lambda disk_id: disk_id in disks, disk_ids))

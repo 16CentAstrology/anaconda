@@ -18,36 +18,52 @@
 # Red Hat Author(s): Vendula Poncova <vponcova@redhat.com>
 #
 import unittest
-import pytest
-
 from unittest.mock import patch
 
+import pytest
 from blivet import devicefactory
 from blivet.devicelibs import raid
-from blivet.devices import StorageDevice, DiskDevice, PartitionDevice, LVMVolumeGroupDevice, \
-    LVMLogicalVolumeDevice, MDRaidArrayDevice, BTRFSVolumeDevice, BTRFSSubVolumeDevice
+from blivet.devices import (
+    BTRFSSubVolumeDevice,
+    BTRFSVolumeDevice,
+    DiskDevice,
+    LVMLogicalVolumeDevice,
+    LVMVolumeGroupDevice,
+    MDRaidArrayDevice,
+    PartitionDevice,
+    StorageDevice,
+)
 from blivet.formats import get_format
 from blivet.size import Size
+from dasbus.typing import *  # pylint: disable=wildcard-import
 
 from pyanaconda.core.constants import PARTITIONING_METHOD_INTERACTIVE
-from dasbus.typing import *  # pylint: disable=wildcard-import
 from pyanaconda.modules.common.containers import DeviceTreeContainer
 from pyanaconda.modules.common.errors.storage import UnsupportedDeviceError
 from pyanaconda.modules.common.structures.device_factory import DeviceFactoryRequest
-from pyanaconda.modules.storage.devicetree.devicetree_interface import DeviceTreeInterface
-from pyanaconda.modules.storage.partitioning.interactive.interactive_module import \
-    InteractivePartitioningModule
-from pyanaconda.modules.storage.partitioning.interactive import utils
-from pyanaconda.modules.storage.partitioning.interactive.interactive_interface import \
-    InteractivePartitioningInterface
-from pyanaconda.modules.storage.partitioning.interactive.interactive_partitioning import \
-    InteractivePartitioningTask
-from pyanaconda.modules.storage.partitioning.interactive.scheduler_module import \
-    DeviceTreeSchedulerModule
 from pyanaconda.modules.storage.devicetree import create_storage
-
-from tests.unit_tests.pyanaconda_tests import patch_dbus_publish_object, check_task_creation, \
-    check_dbus_object_creation, reset_dbus_container
+from pyanaconda.modules.storage.devicetree.devicetree_interface import (
+    DeviceTreeInterface,
+)
+from pyanaconda.modules.storage.partitioning.interactive import utils
+from pyanaconda.modules.storage.partitioning.interactive.interactive_interface import (
+    InteractivePartitioningInterface,
+)
+from pyanaconda.modules.storage.partitioning.interactive.interactive_module import (
+    InteractivePartitioningModule,
+)
+from pyanaconda.modules.storage.partitioning.interactive.interactive_partitioning import (
+    InteractivePartitioningTask,
+)
+from pyanaconda.modules.storage.partitioning.interactive.scheduler_module import (
+    DeviceTreeSchedulerModule,
+)
+from tests.unit_tests.pyanaconda_tests import (
+    check_dbus_object_creation,
+    check_task_creation,
+    patch_dbus_publish_object,
+    reset_dbus_container,
+)
 
 
 class InteractivePartitioningInterfaceTestCase(unittest.TestCase):
@@ -226,7 +242,7 @@ class InteractiveUtilsTestCase(unittest.TestCase):
 
         request = utils.generate_device_factory_request(self.storage, lv)
         assert DeviceFactoryRequest.to_structure(request) == {
-            "device-spec": get_variant(Str, "testvg-testlv"),
+            "device-spec": get_variant(Str, lv.device_id),
             "disks": get_variant(List[Str], []),
             "mount-point": get_variant(Str, ""),
             "reformat": get_variant(Bool, True),
@@ -238,7 +254,7 @@ class InteractiveUtilsTestCase(unittest.TestCase):
             "device-size": get_variant(UInt64, Size("508 MiB").get_bytes()),
             "device-encrypted": get_variant(Bool, False),
             "device-raid-level": get_variant(Str, ""),
-            "container-spec": get_variant(Str, "testvg"),
+            "container-spec": get_variant(Str, vg.device_id),
             "container-name": get_variant(Str, "testvg"),
             "container-size-policy": get_variant(Int64, Size("1.5 GiB")),
             "container-encrypted": get_variant(Bool, False),
@@ -263,8 +279,8 @@ class InteractiveUtilsTestCase(unittest.TestCase):
 
         request = utils.generate_device_factory_request(self.storage, device)
         assert DeviceFactoryRequest.to_structure(request) == {
-            "device-spec": get_variant(Str, "dev3"),
-            "disks": get_variant(List[Str], ["dev1", "dev2"]),
+            "device-spec": get_variant(Str, device.device_id),
+            "disks": get_variant(List[Str], [disk1.device_id, disk2.device_id]),
             "mount-point": get_variant(Str, ""),
             "reformat": get_variant(Bool, True),
             "format-type": get_variant(Str, ""),
@@ -303,7 +319,7 @@ class InteractiveUtilsTestCase(unittest.TestCase):
 
         request = utils.generate_device_factory_request(self.storage, dev3)
         assert DeviceFactoryRequest.to_structure(request) == {
-            "device-spec": get_variant(Str, dev3.name),
+            "device-spec": get_variant(Str, dev3.device_id),
             "disks": get_variant(List[Str], []),
             "mount-point": get_variant(Str, "/boot"),
             "reformat": get_variant(Bool, True),
@@ -315,7 +331,7 @@ class InteractiveUtilsTestCase(unittest.TestCase):
             "device-size": get_variant(UInt64, Size("10 GiB").get_bytes()),
             "device-encrypted": get_variant(Bool, False),
             "device-raid-level": get_variant(Str, ""),
-            "container-spec": get_variant(Str, dev2.name),
+            "container-spec": get_variant(Str, dev2.device_id),
             "container-name": get_variant(Str, dev2.name),
             "container-size-policy": get_variant(Int64, Size("10 GiB").get_bytes()),
             "container-encrypted": get_variant(Bool, False),
@@ -383,7 +399,7 @@ class InteractiveUtilsTestCase(unittest.TestCase):
             "fstype": None,
             "label": None,
             "encrypted": False,
-            "luks_version": None,
+            "luks_version": "luks2",
             "raid_level": None,
             "container_name": "container1",
             "container_size": Size("10 GiB"),

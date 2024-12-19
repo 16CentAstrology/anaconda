@@ -24,29 +24,35 @@ from blivet.devices import NetworkStorageDevice
 from blivet.formats.disklabel import DiskLabel
 from blivet.iscsi import iscsi
 from blivet.size import Size
-
-from pyanaconda.core.constants import BOOTLOADER_TIMEOUT_UNSET
-from pyanaconda.modules.common.util import is_module_available
-from pyanaconda.network import iface_for_host_ip
-from pyanaconda.modules.storage.platform import platform, PLATFORM_DEVICE_TYPES, \
-    PLATFORM_FORMAT_TYPES, PLATFORM_MOUNT_POINTS, PLATFORM_MAX_END, PLATFORM_RAID_LEVELS, \
-    PLATFORM_RAID_METADATA
-from pyanaconda.anaconda_loggers import get_module_logger
-from pyanaconda.modules.storage.bootloader.image import LinuxBootLoaderImage
-from pyanaconda.core import util
-from pyanaconda.core.kernel import kernel_arguments
-from pyanaconda.core.configuration.anaconda import conf
-from pyanaconda.core.i18n import N_, _
-from pyanaconda.core.path import open_with_perm
-from pyanaconda.modules.common.constants.objects import FCOE, ISCSI, BOOTLOADER
-from pyanaconda.modules.common.structures.iscsi import Node
-from pyanaconda.modules.common.constants.services import STORAGE, NETWORK, SECURITY
-from pyanaconda.modules.common.structures.network import NetworkDeviceInfo
 from pykickstart.constants import SELINUX_DISABLED
+
+from pyanaconda.anaconda_loggers import get_module_logger
+from pyanaconda.core import util
+from pyanaconda.core.configuration.anaconda import conf
+from pyanaconda.core.constants import BOOTLOADER_TIMEOUT_UNSET
+from pyanaconda.core.i18n import N_, _
+from pyanaconda.core.kernel import kernel_arguments
+from pyanaconda.core.path import open_with_perm
+from pyanaconda.modules.common.constants.objects import BOOTLOADER, FCOE, ISCSI
+from pyanaconda.modules.common.constants.services import NETWORK, SECURITY, STORAGE
+from pyanaconda.modules.common.structures.iscsi import Node
+from pyanaconda.modules.common.structures.network import NetworkDeviceInfo
+from pyanaconda.modules.common.util import is_module_available
+from pyanaconda.modules.storage.bootloader.image import LinuxBootLoaderImage
+from pyanaconda.modules.storage.platform import (
+    PLATFORM_DEVICE_TYPES,
+    PLATFORM_FORMAT_TYPES,
+    PLATFORM_MAX_END,
+    PLATFORM_MOUNT_POINTS,
+    PLATFORM_RAID_LEVELS,
+    PLATFORM_RAID_METADATA,
+    platform,
+)
+from pyanaconda.network import iface_for_host_ip
 
 log = get_module_logger(__name__)
 
-__all__ = ["BootLoaderError", "BootLoaderArguments", "BootLoader"]
+__all__ = ["BootLoader", "BootLoaderArguments", "BootLoaderError"]
 
 
 def _is_on_sw_iscsi(device):
@@ -164,7 +170,7 @@ class BootLoaderArguments:
             self.add(key)
 
 
-class BootLoader(object):
+class BootLoader:
     """A base class for boot loaders."""
 
     name = "Generic Bootloader"
@@ -327,7 +333,7 @@ class BootLoader(object):
             return ret
 
         if raid_levels and device.level not in raid_levels:
-            levels_str = ",".join("%s" % l for l in raid_levels)
+            levels_str = ",".join("%s" % level for level in raid_levels)
             self.errors.append(_("RAID sets that contain '%(desc)s' must have one "
                                  "of the following raid levels: %(raid_level)s.")
                                % {"desc": desc, "raid_level": levels_str})
@@ -738,21 +744,13 @@ class BootLoader(object):
     def timeout(self, seconds):
         self._timeout = seconds
 
-    def prepare(self, storage):
-        """Prepare the bootloader for the installation.
-
-        FIXME: Move this function into a task.
-        """
+    def prepare(self):
+        """Prepare the bootloader for the installation."""
         bootloader_proxy = STORAGE.get_proxy(BOOTLOADER)
         self._update_flags(bootloader_proxy)
         self._apply_password(bootloader_proxy)
         self._apply_timeout(bootloader_proxy)
         self._apply_zipl_secure_boot(bootloader_proxy)
-        self._set_extra_boot_args(bootloader_proxy)
-        self._set_storage_boot_args(storage)
-        self._preserve_some_boot_args()
-        self._set_graphical_boot_args()
-        self._set_security_boot_args()
 
     def _update_flags(self, bootloader_proxy):
         """Update flags."""
@@ -790,8 +788,20 @@ class BootLoader(object):
         log.debug("Applying ZIPL Secure Boot: %s", secure_boot)
         self.secure = secure_boot
 
-    def _set_extra_boot_args(self, bootloader_proxy):
+    def collect_arguments(self, storage):
+        """Collect kernel arguments for the installation.
+
+        FIXME: Move this code out of this class.
+        """
+        self._set_extra_boot_args()
+        self._set_storage_boot_args(storage)
+        self._preserve_some_boot_args()
+        self._set_graphical_boot_args()
+        self._set_security_boot_args()
+
+    def _set_extra_boot_args(self):
         """Set the extra boot args."""
+        bootloader_proxy = STORAGE.get_proxy(BOOTLOADER)
         self.boot_args.update(bootloader_proxy.ExtraArguments)
 
     def _set_storage_boot_args(self, storage):
@@ -845,6 +855,8 @@ class BootLoader(object):
 
                 if device != dep and not device.depends_on(dep):
                     continue
+
+                setup_args = None
 
                 if isinstance(dep, blivet.devices.FcoeDiskDevice):
                     log.debug("Getting dracut arguments for FCoE device %s", dep)

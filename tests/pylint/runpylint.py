@@ -1,12 +1,11 @@
 #!/usr/bin/python3
 
 import atexit
+import os
 import shutil
 import sys
 import tempfile
 import time
-import os
-
 from os import path
 
 from censorship import CensorshipConfig, CensorshipLinter, FalsePositive
@@ -24,7 +23,7 @@ class AnacondaLintConfig(CensorshipConfig):
 
         self.false_positives = [
             FalsePositive(r"^E1101.*: Instance of 'KickstartSpecificationHandler' has no '.*' member$"),
-            FalsePositive(r"^E1101.*: Method 'PropertiesChanged' has no 'connect' member"),
+            FalsePositive(r"^E1101.*: Class 'Bytes' has no 'new' member$"),
 
             # TODO: BlockDev introspection needs to be added to pylint to handle these
             FalsePositive(r"E1101.*: Instance of 'int' has no 'dasd_is_fba' member"),
@@ -68,10 +67,13 @@ class AnacondaLintConfig(CensorshipConfig):
                     # going to be valid python anyway.
                     continue
 
-                # Test any file that either ends in .py or contains #!/usr/bin/python
-                # in the first line.
-                if f.endswith(".py") or (line and str(line).startswith("#!/usr/bin/python")):
-                    retval.append(root + "/" + f)
+                # Test only files which meets these conditions:
+                # Ignore j2 files which are input for template rendering
+                if not f.endswith(".j2"):
+                    # Either ends in .py or contains #!/usr/bin/python in the first line.
+                    if f.endswith(".py") or \
+                       (line and str(line).startswith("#!/usr/bin/python")):
+                        retval.append(root + "/" + f)
 
         return retval
 
@@ -100,10 +102,10 @@ def setup_environment():
     # Don't try to connect to the accessibility socket.
     os.environ["NO_AT_BRIDGE"] = "1"
 
-    # Force the GDK backend to X11.  Otherwise if no display can be found, Gdk
+    # Force the GDK backend to Wayland.  Otherwise if no display can be found, Gdk
     # tries every backend type, which includes "broadway", which prints an error
     # and keeps changing the content of said error.
-    os.environ["GDK_BACKEND"] = "x11"
+    os.environ["GDK_BACKEND"] = "wayland"
 
     # Save analysis data in the pylint directory.
     os.environ["PYLINTHOME"] = builddir + "/tests/pylint/.pylint.d"

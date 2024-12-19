@@ -16,31 +16,37 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
-import socket
-import itertools
-import time
-import threading
-import re
 import ipaddress
+import itertools
+import os
+import re
+import shutil
+import socket
+import threading
+import time
 
+import gi
 from dasbus.typing import get_native
 
 from pyanaconda.anaconda_loggers import get_module_logger
-from pyanaconda.core import util, constants
-from pyanaconda.core.i18n import _
-from pyanaconda.core.kernel import kernel_arguments
-from pyanaconda.core.regexes import HOSTNAME_PATTERN_WITHOUT_ANCHORS, \
-    IPV6_ADDRESS_IN_DRACUT_IP_OPTION, MAC_OCTET
+from pyanaconda.core import constants, util
 from pyanaconda.core.configuration.anaconda import conf
 from pyanaconda.core.constants import TIME_SOURCE_SERVER
-from pyanaconda.modules.common.constants.services import NETWORK, TIMEZONE, STORAGE
+from pyanaconda.core.i18n import _
+from pyanaconda.core.kernel import kernel_arguments
+from pyanaconda.core.path import make_directories
+from pyanaconda.core.regexes import (
+    HOSTNAME_PATTERN_WITHOUT_ANCHORS,
+    IPV6_ADDRESS_IN_DRACUT_IP_OPTION,
+    MAC_OCTET,
+)
 from pyanaconda.modules.common.constants.objects import FCOE
-from pyanaconda.modules.common.task import sync_run_task
+from pyanaconda.modules.common.constants.services import NETWORK, STORAGE, TIMEZONE
 from pyanaconda.modules.common.structures.network import NetworkDeviceInfo
 from pyanaconda.modules.common.structures.timezone import TimeSourceData
+from pyanaconda.modules.common.task import sync_run_task
 from pyanaconda.modules.common.util import is_module_available
 
-import gi
 gi.require_version("NM", "1.0")
 from gi.repository import NM
 
@@ -51,10 +57,23 @@ network_connected_condition = threading.Condition()
 
 _nm_client = None
 
-__all__ = ["get_supported_devices", "status_message", "wait_for_connectivity",
-           "wait_for_connecting_NM_thread", "wait_for_network_devices", "wait_for_connected_NM",
-           "initialize_network", "prefix_to_netmask", "netmask_to_prefix", "get_first_ip_address",
-           "is_valid_hostname", "check_ip_address", "get_nm_client", "write_configuration"]
+__all__ = [
+    "check_ip_address",
+    "copy_resolv_conf_to_root",
+    "get_first_ip_address",
+    "get_nm_client",
+    "get_supported_devices",
+    "initialize_network",
+    "is_valid_hostname",
+    "netmask_to_prefix",
+    "prefix_to_netmask",
+    "status_message",
+    "wait_for_connected_NM",
+    "wait_for_connecting_NM_thread",
+    "wait_for_connectivity",
+    "wait_for_network_devices",
+    "write_configuration",
+]
 
 
 def get_nm_client():
@@ -214,6 +233,22 @@ def iface_for_host_ip(host_ip):
     return route_info[route_info.index("dev") + 1]
 
 
+def copy_resolv_conf_to_root(root="/"):
+    """Copy resolv.conf to a system root."""
+    src = "/etc/resolv.conf"
+    dst = os.path.join(root, src.lstrip('/'))
+    if not os.path.isfile(src):
+        log.debug("%s does not exist", src)
+        return
+    if os.path.isfile(dst):
+        log.debug("%s already exists", dst)
+        return
+    dst_dir = os.path.dirname(dst)
+    if not os.path.isdir(dst_dir):
+        make_directories(dst_dir)
+    shutil.copyfile(src, dst)
+
+
 def run_network_initialization_task(task_path):
     """Run network initialization task and log the result."""
     task_proxy = NETWORK.get_proxy(task_path)
@@ -237,6 +272,12 @@ def initialize_network():
 
     log.debug("Devices found: %s",
               [dev.device_name for dev in get_supported_devices()])
+
+    if util.is_stage2_on_nfs() and network_proxy.Kickstarted:
+        msg = "Using kickstart network configuration with installer image (stage2) provided " \
+            "via nfs server can freeze the installation."
+        log.warning(msg)
+        print("WARNING:", msg)
 
     run_network_initialization_task(network_proxy.ApplyKickstartWithTask())
     run_network_initialization_task(network_proxy.DumpMissingConfigFilesWithTask())

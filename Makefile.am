@@ -16,10 +16,11 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 include ./branch-config.mk
+include ./po/l10n-config.mk
 
 ACLOCAL_AMFLAGS = -I m4
 
-SUBDIRS = data docs dracut po pyanaconda scripts tests widgets ui utils
+SUBDIRS = data docs dracut po pyanaconda scripts tests widgets
 
 EXTRA_DIST = COPYING
 
@@ -33,7 +34,10 @@ MAINTAINERCLEANFILES =	Makefile.in config.guess config.h.in config.sub \
 						py-compile m4/* po/Makefile.in.in po/Rules-quot \
 						test-driver
 
-CLEANFILES = *~
+CLEANFILES = *~ 
+CLEANFILES += $(RPM_BUILD_DIR)/*.rpm
+CLEANFILES += $(SRPM_BUILD_DIR)/*.rpm
+CLEANFILES += *.tar.bz2
 
 dist_noinst_DATA      = $(PACKAGE_NAME).spec
 
@@ -49,7 +53,6 @@ uninstall-hook:
 # Set environment if 'make -f Makefile.am' is called to avoid autotools
 srcdir ?= $(CURDIR)
 
-ARCHIVE_TAG   = $(PACKAGE_NAME)-$(PACKAGE_VERSION)-$(PACKAGE_RELEASE)
 # Set this to "true" if you want to have SRPM archive with test version
 TEST_BUILD	?= "false"
 
@@ -73,7 +76,10 @@ TEMPLATE_RENDERER = scripts/jinja-render
 
 CONTAINER_ENGINE ?= podman
 # build/run tweaks for all containers, such as --cap-add
-CONTAINER_BUILD_ARGS ?= --no-cache
+# Network needs to use host configuration so it is sharing VPN connection
+CONTAINER_BUILD_ARGS ?= --no-cache --network=host
+# run tweaks for all containers
+CONTAINER_RUN_ARGS ?= --tty --interactive
 # HACK: bash's builtin `test -r` fails when running on Ubuntu host (GitHub) due to incompatible seccomp profile
 CONTAINER_TEST_ARGS ?= $(shell grep -q ID=ubuntu /etc/os-release && echo --security-opt=seccomp=unconfined)
 CONTAINER_REGISTRY ?= quay.io
@@ -85,10 +91,12 @@ CI_DOCKERFILE ?= $(srcdir)/dockerfile/anaconda-ci
 RPM_DOCKERFILE ?= $(srcdir)/dockerfile/anaconda-rpm
 RELEASE_DOCKERFILE ?= $(srcdir)/dockerfile/anaconda-release
 ISO_CREATOR_DOCKERFILE ?= $(srcdir)/dockerfile/anaconda-iso-creator
+LIVE_ISO_CREATOR_DOCKERFILE ?= $(srcdir)/dockerfile/anaconda-live-iso-creator
 CI_NAME ?= $(CONTAINER_REGISTRY)/rhinstaller/anaconda-ci
 RPM_NAME ?= $(CONTAINER_REGISTRY)/rhinstaller/anaconda-rpm
 RELEASE_NAME ?= $(CONTAINER_REGISTRY)/rhinstaller/anaconda-release
 ISO_CREATOR_NAME ?= $(CONTAINER_REGISTRY)/rhinstaller/anaconda-iso-creator
+LIVE_ISO_CREATOR_NAME ?= $(CONTAINER_REGISTRY)/rhinstaller/anaconda-live-iso-creator
 CI_TAG := $(or $(CI_TAG),$(GIT_BRANCH))
 CI_TEST_ARGS ?= --rm -v $(srcdir):/anaconda:z
 CI_CMD ?= make ci
@@ -107,13 +115,9 @@ dist-hook:
 	    break ; \
 	done
 
-tag:
-	@git tag -s -a -m "Tag as $(ARCHIVE_TAG)" $(ARCHIVE_TAG)
-	@echo "Tagged as $(ARCHIVE_TAG)"
-
 pot:
 	$(MAKE) -C po $(PACKAGE_NAME).pot-update
-	rm $(srcdir)/po/{main,main_js,extra}.pot
+	rm -f $(srcdir)/po/main.pot
 
 pot-update-check: pot
 # This check is used by github action for auto update of pot file
@@ -163,24 +167,22 @@ container-release:
 	$(CONTAINER_TEST_ARGS) \
 	$(CI_TEST_ARGS) \
 	$(CONTAINER_ADD_ARGS) \
+	$(CONTAINER_RUN_ARGS) \
 	$(RELEASE_NAME):$(CI_TAG) \
 	sh -exc './autogen.sh && ./configure && make release'
-
-release-and-tag:
-	$(MAKE) dist
-	$(MAKE) tag
 
 anaconda-ci-build:
 	TEMP=$$(mktemp -t -d anaconda-ci-build.XXXX) && \
 	cp $(srcdir)/anaconda.spec.in $(CI_DOCKERFILE)/* $$TEMP/ && \
 	echo "Build dir is $$TEMP" && \
 	$(CONTAINER_ENGINE) build \
-	$(CONTAINER_BUILD_ARGS) --pull-always \
+	$(CONTAINER_BUILD_ARGS) \
+	--pull-always \
 	$(CONTAINER_ADD_ARGS) \
 	--build-arg=git_branch=$(GIT_BRANCH) \
 	--build-arg=image=$(BASE_CONTAINER) \
 	--build-arg=copr_repo=$(COPR_REPO) \
-	-t $(CI_NAME):$(CI_TAG) \
+	--tag $(CI_NAME):$(CI_TAG) \
 	$$TEMP/ && \
 	rm -rf $$TEMP
 
@@ -189,12 +191,13 @@ anaconda-rpm-build:
 	cp $(srcdir)/anaconda.spec.in $(RPM_DOCKERFILE)/* $$TEMP/ && \
 	echo "Build dir is $$TEMP" && \
 	$(CONTAINER_ENGINE) build \
-	$(CONTAINER_BUILD_ARGS) --pull-always \
+	$(CONTAINER_BUILD_ARGS) \
+	--pull-always \
 	$(CONTAINER_ADD_ARGS) \
 	--build-arg=git_branch=$(GIT_BRANCH) \
 	--build-arg=image=$(BASE_CONTAINER) \
 	--build-arg=copr_repo=$(COPR_REPO) \
-	-t $(RPM_NAME):$(CI_TAG) \
+	--tag $(RPM_NAME):$(CI_TAG) \
 	$$TEMP/ && \
 	rm -rf $$TEMP
 
@@ -203,16 +206,32 @@ anaconda-release-build: anaconda-rpm-build
 	$(CONTAINER_BUILD_ARGS) \
 	$(CONTAINER_ADD_ARGS) \
 	--build-arg=image=$(RPM_NAME):$(CI_TAG) \
-	-t $(RELEASE_NAME):$(CI_TAG) \
+	--tag $(RELEASE_NAME):$(CI_TAG) \
 	$(RELEASE_DOCKERFILE)
 
 anaconda-iso-creator-build:
-	$(CONTAINER_ENGINE) build \
-	$(CONTAINER_BUILD_ARGS) --pull-always \
+	@sudo -nv 2>/dev/null || echo "You will be prompted for sudo password because this container has to be used under root!"
+
+	sudo $(CONTAINER_ENGINE) build \
+	$(CONTAINER_BUILD_ARGS) \
+	--pull-always \
 	$(CONTAINER_ADD_ARGS) \
 	--build-arg=image=$(BASE_CONTAINER) \
-	-t $(ISO_CREATOR_NAME):$(CI_TAG) \
-  $(ISO_CREATOR_DOCKERFILE)
+	--tag $(ISO_CREATOR_NAME):$(CI_TAG) \
+	$(ISO_CREATOR_DOCKERFILE)
+
+anaconda-live-iso-creator-build:
+	@test "$(GIT_BRANCH)" != "rhel-10" || ( echo "The Live ISO builds are not supported on rhel-10!"; exit 99 )
+
+	@sudo -nv 2>/dev/null || echo "You will be prompted for sudo password because this container has to be used under root!"
+
+	sudo $(CONTAINER_ENGINE) build \
+	$(CONTAINER_BUILD_ARGS) \
+	--pull-always \
+	$(CONTAINER_ADD_ARGS) \
+	--build-arg=image=$(BASE_CONTAINER) \
+	--tag $(LIVE_ISO_CREATOR_NAME):$(CI_TAG) \
+	$(LIVE_ISO_CREATOR_DOCKERFILE)
 
 # User has to be logged first to be able to push the image.
 # See `podman login` for more info.
@@ -279,11 +298,13 @@ ci:
 # The SYS_CHROOT capability is required for user creation tests and was dropped on podman 4.4.X
 # https://bugzilla.redhat.com/show_bug.cgi?id=2170568
 container-ci:
+	@./scripts/testing/check-container-age.sh "$(CI_NAME):$(CI_TAG)"
+
 	$(CONTAINER_ENGINE) run \
 	--entrypoint /anaconda/dockerfile/anaconda-ci/run-build-and-arg \
-	-e CONFIGURE_ARGS="--disable-webui" \
 	$(CONTAINER_TEST_ARGS) \
 	$(CI_TEST_ARGS) \
+	$(CONTAINER_RUN_ARGS) \
 	--cap-add=SYS_CHROOT \
 	$(CONTAINER_ADD_ARGS) \
 	$(CI_NAME):$(CI_TAG) \
@@ -292,28 +313,40 @@ container-ci:
 # The SYS_CHROOT capability is required for user creation tests and was dropped on podman 4.4.X
 # https://bugzilla.redhat.com/show_bug.cgi?id=2170568
 container-shell:
-	$(CONTAINER_ENGINE) run -it \
+	$(CONTAINER_ENGINE) run \
 	$(CONTAINER_TEST_ARGS) \
 	$(CONTAINER_ADD_ARGS) \
+	$(CONTAINER_RUN_ARGS) \
 	$(CI_TEST_ARGS) \
 	--cap-add=SYS_CHROOT \
 	$(CI_NAME):$(CI_TAG)
 
+container-pylint-only:
+	$(MAKE) -f ./Makefile.am container-ci CI_CMD="make tests-pylint"
+
 container-rpm-test:
+	@./scripts/testing/check-container-age.sh "$(RPM_NAME):$(CI_TAG)"
+
 	$(CONTAINER_ENGINE) run \
 	$(CONTAINER_TEST_ARGS) \
 	$(CI_TEST_ARGS) \
 	-v $(CI_DOCKERFILE)/run-build-and-arg:/run-build-and-arg \
 	$(CONTAINER_ADD_ARGS) \
+	$(CONTAINER_RUN_ARGS) \
 	$(RPM_NAME):$(CI_TAG) \
 	sh -exc ' \
 	    /run-build-and-arg make run-rpm-tests-only; \
-	    dnf install -y /tmp/anaconda/result/build/01-rpm-build/*.rpm'
+	    dnf install -y /tmp/anaconda/result/build/01-rpm-build/*.rpm; \
+	    cd /tmp/anaconda; \
+	    rpmlint *.spec.in result/build/01-rpm-build/*.rpm --config rpmlint.toml'
 
 container-rpms:
+	@./scripts/testing/check-container-age.sh "$(RPM_NAME):$(CI_TAG)"
+
 	$(CONTAINER_ENGINE) run \
 	$(CONTAINER_TEST_ARGS) \
 	$(CI_TEST_ARGS) \
+	$(CONTAINER_RUN_ARGS) \
 	-v $(CI_DOCKERFILE)/run-build-and-arg:/run-build-and-arg \
 	$(CONTAINER_ADD_ARGS) \
 	$(RPM_NAME):$(CI_TAG) \
@@ -324,6 +357,64 @@ container-rpms:
 
 container-rpms-scratch:
 	$(MAKE) -f ./Makefile.am CONTAINER_ADD_ARGS="-e TEST_BUILD=true" container-rpms
+
+# Build ISO from Anaconda RPM files build here
+container-iso-build:
+	@sudo -nv 2>/dev/null || echo "You will be prompted for sudo password because of loop device mounting in Lorax!"
+
+	@if ! ls $(srcdir)/result/build/01-rpm-build/anaconda-*.rpm >/dev/null 2>/dev/null; then \
+		echo "You need to have anaconda RPMs build first. Please run 'make -f ./Makefile.am container-rpms-scratch' before this command."; \
+		exit 1; \
+	fi
+
+	@echo 'If you need VPN access, please use `CONTAINER_ADD_ARGS=--network=host`'
+
+	mkdir -p result/iso
+	sudo $(CONTAINER_ENGINE) run \
+	--rm \
+	--privileged \
+	$(shell test $(shell grep MemTotal /proc/meminfo | awk '{print $$2}') -gt 11000000 && \
+	  echo --tmpfs /var/tmp:rw,mode=1777) \
+	-v $(srcdir)/result/build/01-rpm-build:/anaconda-rpms:ro \
+	-v $(srcdir)/result/iso:/images:z \
+	$(CONTAINER_ADD_ARGS) \
+	$(CONTAINER_RUN_ARGS) \
+	$(ISO_CREATOR_NAME):$(CI_TAG)
+	@echo "ISO is stored in $(scrdir)/result/iso/"
+
+# Build WebUI ISO from Anaconda RPM files build here
+container-webui-iso-build:
+	@test "$(GIT_BRANCH)" != "rhel-10" || ( echo "The webui ISO builds are not supported on rhel-10!"; exit 99 )
+
+	$(MAKE) -f ./Makefile.am container-iso-build CONTAINER_ADD_ARGS="--entrypoint=/lorax-build-webui"
+
+# Build LIVE ISO from Anaconda RPM files build here
+container-live-iso-build:
+	@test "$(GIT_BRANCH)" != "rhel-10" || ( echo "The Live ISO builds are not supported on rhel-10!"; exit 99 )
+
+	@sudo -nv 2>/dev/null || echo "You will be prompted for sudo password because of loop device mounting in Lorax!"
+
+	@echo 'If you need VPN access, please use `CONTAINER_ADD_ARGS=--network=host`'
+
+	@if ! ls $(srcdir)/result/build/01-rpm-build/anaconda-*.rpm >/dev/null 2>/dev/null; then \
+		echo "You need to have anaconda RPMs build first. Please run 'make -f ./Makefile.am container-rpms-scratch' before this command."; \
+		exit 1; \
+	fi
+
+	mkdir -p result/iso/logs
+	sudo $(CONTAINER_ENGINE) run \
+	--rm \
+	--tty \
+	--privileged \
+	$(shell test $(shell grep MemTotal /proc/meminfo | awk '{print $$2}') -gt 15000000 && \
+	  echo --tmpfs /var/tmp:rw,mode=1777) \
+	--device /dev/kvm \
+	-v $(srcdir)/result/build/01-rpm-build:/anaconda-rpms:ro \
+	-v $(srcdir)/result/iso:/images:z \
+	$(CONTAINER_ADD_ARGS) \
+	$(CONTAINER_RUN_ARGS) \
+	$(LIVE_ISO_CREATOR_NAME):$(CI_TAG)
+	@echo "ISO is stored in $(scrdir)/result/iso/"
 
 check-branching:
 # checking if branching can be finished and all the pieces are in place
@@ -346,10 +437,10 @@ check-branching:
 	@echo "===================================="
 	@echo "Testing localization for $(L10N_DIR)"
 	@echo "===================================="
-	@curl --fail --silent --show-error -L https://raw.githubusercontent.com/rhinstaller/anaconda-l10n/$(GIT_L10N_BRANCH)/$(L10N_DIR)/anaconda.pot >/dev/null ||  \
+	@curl --fail --silent --show-error -L https://raw.githubusercontent.com/rhinstaller/anaconda-l10n/$(GIT_L10N_SHA)/$(L10N_DIR)/anaconda.pot >/dev/null ||  \
 		(echo "*** Can't download translations from a localization repository"; \
 		 echo "repository: $(L10N_REPOSITORY)"; \
-		 echo "branch:     $(GIT_L10N_BRANCH)"; \
+		 echo "sha:        $(GIT_L10N_SHA)"; \
 		 echo "directory:  $(L10N_DIR)"; \
 		 exit 2)
 
@@ -357,7 +448,7 @@ check-branching:
 	@echo "Testing pykickstart configuration"
 	@echo "===================================="
 	@substituted_branch=$$(echo "$(GIT_BRANCH)" | sed 's/^master$$/DEVEL/'); \
-	for i in $$(git grep 'from pykickstart.version import DEVEL as VERSION' -- pyanaconda/ dracut/ | awk -F "[: ]" '{print $$1 ";" $$5}'); do \
+	for i in $$(git grep 'from pykickstart.version import DEVEL as VERSION' -- pyanaconda/ dracut/ | awk -F "[: ]" '!/.j2:/ {print $$1 ";" $$5}'); do \
 		i=$${i^^}; \
 		if [ "$${i#*;}" != "$$substituted_branch" ]; then \
 			echo "$${i%;*} is not substituted properly!"; \
@@ -386,13 +477,16 @@ run-tests:
 	@rm -rf $(USER_SITE_BASE)
 	$(MAKE) coverage-report
 
-tests-pep8:
-	$(MAKE)
-	$(MAKE) TMPDIR=/var/tmp TEST_SUITE_LOG=test-suite.log TESTS=pep8/runpep8.sh check
-
 tests-pylint:
 	$(MAKE)
-	$(MAKE) TMPDIR=/var/tmp TEST_SUITE_LOG=test-suite.log TESTS=pylint/runpylint.py check
+# For a weird reason when pylint is not in TESTS included for automake (during configure)
+# it won't allow us to use makefile check to start the tests.
+# Unfortunately, we removed pylint from the TESTS because we don't want it to run as default
+	set -o pipefail ; \
+	$(srcdir)/tests/pylint/runpylint | tee $(srcdir)/tests/pylint/runpylint.log ; \
+	rc=$$? ; \
+	$(MAKE) grab-logs ; \
+	exit $$rc
 
 tests-unit-only:
 	@mkdir -p $(USER_SITE_PACKAGES)
@@ -408,9 +502,6 @@ run-rpm-tests-only: rpms
 	$(MAKE) TEST_SUITE_LOG=test-suite.log RPM_PATH=$(RPM_BUILD_DIR) \
 			ROOT_ANACONDA_PATH=$(abs_srcdir) TESTS=rpm_tests/rpm_tests.sh check
 
-webui-tests: srpm
-	$(MAKE) --directory ui/webui integration-test
-
 coverage-report:
 	$(COVERAGE) combine tests/.coverage.*
 	$(COVERAGE) xml -o tests/coverage-report.xml
@@ -424,3 +515,15 @@ reload-infra:
 	@for template in $$(find . -type f -name '*.j2'); do \
 		$(TEMPLATE_RENDERER) $${template} $${template%.j2}; \
 	done
+
+bump-l10n-sha:
+	@new_sha=$$(git ls-remote "$(L10N_REPOSITORY)" "refs/heads/$(GIT_L10N_BRANCH)" | cut -f 1); \
+	echo "New SHA: $$new_sha"; \
+	old_sha=$$(grep "GIT_L10N_SHA" po/l10n-config.mk | FS="?=" awk '{print $$3}'); \
+	echo "Old SHA: $$old_sha"; \
+	if [ "$$old_sha" != "$$new_sha" ] ; then \
+		echo "Writing new SHA."; \
+		sed -i "s/GIT_L10N_SHA ?= $$old_sha/GIT_L10N_SHA ?= $$new_sha/g" po/l10n-config.mk; \
+	else \
+		echo "Nothing to do."; \
+	fi

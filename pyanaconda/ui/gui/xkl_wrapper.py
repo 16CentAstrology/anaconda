@@ -16,60 +16,32 @@
 # Red Hat, Inc.
 #
 
-"""
-This module include functions and classes for dealing with multiple layouts in
-Anaconda. It wraps the libxklavier functionality to protect Anaconda from
-dealing with its "nice" API that looks like a Lisp-influenced "good old C" and
-also systemd-localed functionality.
-
-It provides a XklWrapper class with several methods that can be used for listing
-and various modifications of keyboard layouts settings.
-
-"""
-
-import gi
-gi.require_version("GdkX11", "3.0")
-gi.require_version("Xkl", "1.0")
-
-from gi.repository import GdkX11, Xkl
-
-import threading
 import gettext
+import threading
 from collections import namedtuple
 
-from pyanaconda.core.configuration.anaconda import conf
-from pyanaconda.core.constants import DEFAULT_KEYBOARD
-from pyanaconda.core.string import upcase_first_letter
-from pyanaconda.keyboard import join_layout_variant, parse_layout_variant, \
-    KeyboardConfigError, InvalidLayoutVariantSpec, normalize_layout_variant
-from pyanaconda.core.async_utils import async_action_wait
+import iso639
+from xkbregistry import rxkb
+
 from pyanaconda import localization
-
-
-from pyanaconda.anaconda_loggers import get_module_logger
-log = get_module_logger(__name__)
+from pyanaconda.core.async_utils import async_action_wait
+from pyanaconda.core.string import upcase_first_letter
+from pyanaconda.keyboard import normalize_layout_variant
+from pyanaconda.modules.common.constants.services import LOCALIZATION
 
 Xkb_ = lambda x: gettext.translation("xkeyboard-config", fallback=True).gettext(x)
 iso_ = lambda x: gettext.translation("iso_639", fallback=True).gettext(x)
 
 # namedtuple for information about a keyboard layout (its language and description)
-LayoutInfo = namedtuple("LayoutInfo", ["lang", "desc"])
+LayoutInfo = namedtuple("LayoutInfo", ["langs", "desc"])
 
-
-class XklWrapperError(KeyboardConfigError):
-    """Exception class for reporting libxklavier-related problems"""
-
-    pass
-
-
-class XklWrapper(object):
+class XklWrapper:
     """
-    Class wrapping the libxklavier functionality
+    Class that used to wrap libxklavier functionality.
 
-    Use this class as a singleton class because it provides read-only data
-    and initialization (that takes quite a lot of time) reads always the
-    same data. It doesn't have sense to make multiple instances
-
+    libxklavier is deprecated and X11-only. On RHEL, the GNOME Kiosk API is used
+    instead. This class is kept to keep make the code migration as simple as
+    possible.
     """
 
     _instance = None
@@ -84,134 +56,68 @@ class XklWrapper(object):
         return XklWrapper._instance
 
     def __init__(self):
-        #initialize Xkl-related stuff
-        display = GdkX11.x11_get_default_xdisplay()
-        self._engine = Xkl.Engine.get_instance(display)
+        self._keyboard_manager = LOCALIZATION.get_proxy()
+        self._switching_options = []
 
-        self._rec = Xkl.ConfigRec()
-        if not self._rec.get_from_server(self._engine):
-            raise XklWrapperError("Failed to get configuration from server")
+        self._rxkb = rxkb.Context()
 
-        #X is probably initialized to the 'us' layout without any variant and
-        #since we want to add layouts with variants we need the layouts and
-        #variants lists to have the same length. Add "" padding to variants.
-        #See docstring of the add_layout method for details.
-        diff = len(self._rec.layouts) - len(self._rec.variants)
-        if diff > 0 and conf.system.can_activate_layouts:
-            self._rec.set_variants(self._rec.variants + (diff * [""]))
-            if not self._rec.activate(self._engine):
-                # failed to activate layouts given e.g. by a kickstart (may be
-                # invalid)
-                lay_var_str = ",".join(map(join_layout_variant,
-                                           self._rec.layouts,
-                                           self._rec.variants))
-                log.error("Failed to activate layouts: '%s', "
-                          "falling back to default %s", lay_var_str, DEFAULT_KEYBOARD)
-                self._rec.set_layouts([DEFAULT_KEYBOARD])
-                self._rec.set_variants([""])
+        self._layout_infos = {}
+        self._build_layout_infos()
 
-                if not self._rec.activate(self._engine):
-                    # failed to activate even the default layout, something is
-                    # really wrong
-                    raise XklWrapperError("Failed to initialize layouts")
+        self._switch_opt_infos = {}
+        self._build_switch_opt_infos()
 
-        #needed also for Gkbd.KeyboardDrawingDialog
-        self.configreg = Xkl.ConfigRegistry.get_instance(self._engine)
-        self.configreg.load(False)
+    def _build_layout_infos(self):
+        for layout in self._rxkb.layouts.values():
+            name = layout.name
+            if layout.variant:
+                name += ' (' + layout.variant + ')'
 
-        self._layout_infos = dict()
-        self._layout_infos_lock = threading.RLock()
-        self._switch_opt_infos = dict()
-        self._switch_opt_infos_lock = threading.RLock()
+            langs = []
+            for lang in layout.iso639_codes:
+                if iso639.find(iso639_2=lang):
+                    langs.append(iso639.to_name(lang))
 
-        #this might take quite a long time
-        self.configreg.foreach_language(self._get_language_variants, None)
-        self.configreg.foreach_country(self._get_country_variants, None)
+            if name not in self._layout_infos:
+                self._layout_infos[name] = LayoutInfo(langs, layout.description)
+            else:
+                self._layout_infos[name].langs.extend(langs)
 
-        #'grp' means that we want layout (group) switching options
-        self.configreg.foreach_option('grp', self._get_switch_option, None)
+    def _build_switch_opt_infos(self):
+        for group in self._rxkb.option_groups:
+            # 'grp' means that we want layout (group) switching options
+            if group.name != 'grp':
+                continue
 
-    def _get_lang_variant(self, c_reg, item, subitem, lang):
-        if subitem:
-            name = item.get_name() + " (" + subitem.get_name() + ")"
-            description = subitem.get_description()
-        else:
-            name = item.get_name()
-            description = item.get_description()
+            for option in group.options.values():
+                self._switch_opt_infos[option.name] = option.description
 
-        #if this layout has already been added for some other language,
-        #do not add it again (would result in duplicates in our lists)
-        if name not in self._layout_infos:
-            with self._layout_infos_lock:
-                self._layout_infos[name] = LayoutInfo(lang, description)
+    @property
+    def compositor_selected_layout_changed(self):
+        """Signal emitted when the selected keyboard layout changes."""
+        return self._keyboard_manager.CompositorSelectedLayoutChanged
 
-    def _get_country_variant(self, c_reg, item, subitem, country):
-        if subitem:
-            name = item.get_name() + " (" + subitem.get_name() + ")"
-            description = subitem.get_description()
-        else:
-            name = item.get_name()
-            description = item.get_description()
+    @property
+    def compositor_layouts_changed(self):
+        """Signal emitted when available layouts change."""
+        return self._keyboard_manager.CompositorLayoutsChanged
 
-        # if the layout was not added with any language, add it with a country
-        if name not in self._layout_infos:
-            with self._layout_infos_lock:
-                self._layout_infos[name] = LayoutInfo(country, description)
-
-    def _get_language_variants(self, c_reg, item, user_data=None):
-        lang_name, lang_desc = item.get_name(), item.get_description()
-
-        c_reg.foreach_language_variant(lang_name, self._get_lang_variant, lang_desc)
-
-    def _get_country_variants(self, c_reg, item, user_data=None):
-        country_name, country_desc = item.get_name(), item.get_description()
-
-        c_reg.foreach_country_variant(country_name, self._get_country_variant,
-                                      country_desc)
-
-    def _get_switch_option(self, c_reg, item, user_data=None):
-        """Helper function storing layout switching options in foreach cycle"""
-        desc = item.get_description()
-        name = item.get_name()
-
-        with self._switch_opt_infos_lock:
-            self._switch_opt_infos[name] = desc
-
+    @async_action_wait
     def get_current_layout(self):
         """
-        Get current activated X layout and variant
+        Get current activated layout and variant
 
-        :return: current activated X layout and variant (e.g. "cz (qwerty)")
+        :return: current activated layout and variant (e.g. "cz (qwerty)")
 
+        :raise KeyboardConfigError: if layouts with invalid backend type is found
         """
-        # ported from the widgets/src/LayoutIndicator.c code
 
-        self._engine.start_listen(Xkl.EngineListenModes.TRACK_KEYBOARD_STATE)
-        state = self._engine.get_current_state()
-        cur_group = state.group
-        num_groups = self._engine.get_num_groups()
-
-        # BUG?: if the last layout in the list is activated and removed,
-        #       state.group may be equal to n_groups
-        if cur_group >= num_groups:
-            cur_group = num_groups - 1
-
-        layout = self._rec.layouts[cur_group] # pylint: disable=unsubscriptable-object
-        try:
-            variant = self._rec.variants[cur_group] # pylint: disable=unsubscriptable-object
-        except IndexError:
-            # X server may have forgotten to add the "" variant for its default layout
-            variant = ""
-
-        self._engine.stop_listen(Xkl.EngineListenModes.TRACK_KEYBOARD_STATE)
-
-        return join_layout_variant(layout, variant)
+        return self._keyboard_manager.GetCompositorSelectedLayout()
 
     def get_available_layouts(self):
         """A list of layouts"""
 
-        with self._layout_infos_lock:
-            return list(self._layout_infos.keys())
+        return list(self._layout_infos.keys())
 
     def get_common_layouts(self):
         """A list of common layouts"""
@@ -223,8 +129,7 @@ class XklWrapper(object):
     def get_switching_options(self):
         """Method returning list of available layout switching options"""
 
-        with self._switch_opt_infos_lock:
-            return list(self._switch_opt_infos.keys())
+        return list(self._switch_opt_infos.keys())
 
     def get_layout_variant_description(self, layout_variant, with_lang=True, xlated=True):
         """
@@ -243,20 +148,30 @@ class XklWrapper(object):
         """
 
         layout_info = self._layout_infos[layout_variant]
-
+        lang = ""
         # translate language and upcase its first letter, translate the
         # layout-variant description
         if xlated:
-            lang = iso_(layout_info.lang)
+            if len(layout_info.langs) == 1:
+                lang = iso_(layout_info.langs[0])
             description = Xkb_(layout_info.desc)
         else:
-            lang = upcase_first_letter(layout_info.lang)
+            if len(layout_info.langs) == 1:
+                lang = upcase_first_letter(layout_info.langs[0])
             description = layout_info.desc
 
-        if with_lang and lang and not description.startswith(lang):
-            return "%s (%s)" % (lang, description)
-        else:
-            return description
+        if with_lang and lang:
+            # ISO language/country names can be things like
+            # "Occitan (post 1500); Provencal", or
+            # "Iran, Islamic Republic of", or "Greek, Modern (1453-)"
+            # or "Catalan; Valencian": let's handle that gracefully
+            # let's also ignore case, e.g. in French all translated
+            # language names are lower-case for some reason
+            checklang = lang.split()[0].strip(",;").lower()
+            if checklang not in description.lower():
+                return "%s (%s)" % (lang, description)
+
+        return description
 
     def get_switch_opt_description(self, switch_opt):
         """
@@ -278,9 +193,14 @@ class XklWrapper(object):
         Activates default layout (the first one in the list of configured
         layouts).
 
+        :raise KeyboardConfigError: if layouts with invalid backend type is found
         """
 
-        self._engine.lock_group(0)
+        layouts = self._keyboard_manager.GetCompositorLayouts()
+        if not layouts:
+            return
+
+        self._keyboard_manager.SetCompositorSelectedLayout(layouts[0])
 
     def is_valid_layout(self, layout):
         """Return if given layout is valid layout or not"""
@@ -288,97 +208,16 @@ class XklWrapper(object):
         return layout in self._layout_infos
 
     @async_action_wait
-    def add_layout(self, layout):
-        """
-        Method that tries to add a given layout to the current X configuration.
-
-        The X layouts configuration is handled by two lists. A list of layouts
-        and a list of variants. Index-matching items in these lists (as if they
-        were zipped) are used for the construction of real layouts (e.g.
-        'cz (qwerty)').
-
-        :param layout: either 'layout' or 'layout (variant)'
-        :raise XklWrapperError: if the given layout is invalid or cannot be added
-
-        """
-
-        try:
-            #we can get 'layout' or 'layout (variant)'
-            (layout, variant) = parse_layout_variant(layout)
-        except InvalidLayoutVariantSpec as ilverr:
-            raise XklWrapperError("Failed to add layout: %s" % ilverr) from ilverr
-
-        #do not add the same layout-variant combinanion multiple times
-        if (layout, variant) in list(zip(self._rec.layouts, self._rec.variants)):
-            return
-
-        self._rec.set_layouts(self._rec.layouts + [layout])
-        self._rec.set_variants(self._rec.variants + [variant])
-
-        if not self._rec.activate(self._engine):
-            raise XklWrapperError("Failed to add layout '%s (%s)'" % (layout,
-                                                                      variant))
-
-    @async_action_wait
-    def remove_layout(self, layout):
-        """
-        Method that tries to remove a given layout from the current X
-        configuration.
-
-        See also the documentation for the add_layout method.
-
-        :param layout: either 'layout' or 'layout (variant)'
-        :raise XklWrapperError: if the given layout cannot be removed
-
-        """
-
-        #we can get 'layout' or 'layout (variant)'
-        (layout, variant) = parse_layout_variant(layout)
-
-        layouts_variants = list(zip(self._rec.layouts, self._rec.variants))
-
-        if (layout, variant) not in layouts_variants:
-            msg = "'%s (%s)' not in the list of added layouts" % (layout,
-                                                                  variant)
-            raise XklWrapperError(msg)
-
-        idx = layouts_variants.index((layout, variant))
-        new_layouts = self._rec.layouts[:idx] + self._rec.layouts[(idx + 1):] # pylint: disable=unsubscriptable-object
-        new_variants = self._rec.variants[:idx] + self._rec.variants[(idx + 1):] # pylint: disable=unsubscriptable-object
-
-        self._rec.set_layouts(new_layouts)
-        self._rec.set_variants(new_variants)
-
-        if not self._rec.activate(self._engine):
-            raise XklWrapperError("Failed to remove layout '%s (%s)'" % (layout,
-                                                                       variant))
-
-    @async_action_wait
     def replace_layouts(self, layouts_list):
         """
-        Method that replaces the layouts defined in the current X configuration
+        Method that replaces the layouts defined in the current configuration
         with the new ones given.
 
         :param layouts_list: list of layouts defined as either 'layout' or
                              'layout (variant)'
-        :raise XklWrapperError: if layouts cannot be replaced with the new ones
-
         """
 
-        new_layouts = list()
-        new_variants = list()
-
-        for layout_variant in layouts_list:
-            (layout, variant) = parse_layout_variant(layout_variant)
-            new_layouts.append(layout)
-            new_variants.append(variant)
-
-        self._rec.set_layouts(new_layouts)
-        self._rec.set_variants(new_variants)
-
-        if not self._rec.activate(self._engine):
-            msg = "Failed to replace layouts with: %s" % ",".join(layouts_list)
-            raise XklWrapperError(msg)
+        self._keyboard_manager.SetCompositorLayouts(layouts_list, self._switching_options)
 
     @async_action_wait
     def set_switching_options(self, options):
@@ -388,17 +227,17 @@ class XklWrapper(object):
 
         :param options: layout switching options to be set
         :type options: list or generator
-        :raise XklWrapperError: if the old options cannot be replaced with the
-                                new ones
 
+        :raise KeyboardConfigError: if layouts with invalid backend type is found
         """
 
         #preserve old "non-switching options"
-        new_options = [opt for opt in self._rec.options if "grp:" not in opt] # pylint: disable=not-an-iterable
+        new_options = [opt for opt in self._switching_options if "grp:" not in opt]
         new_options += options
+        self._switching_options = new_options
 
-        self._rec.set_options(new_options)
+        layouts = self._keyboard_manager.GetCompositorLayouts()
+        if not layouts:
+            return
 
-        if not self._rec.activate(self._engine):
-            msg = "Failed to set switching options to: %s" % ",".join(options)
-            raise XklWrapperError(msg)
+        self._keyboard_manager.SetCompositorLayouts(layouts, self._switching_options)

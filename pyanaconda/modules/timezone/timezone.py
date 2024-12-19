@@ -17,26 +17,46 @@
 # License and may only be used or replicated with the express permission of
 # Red Hat, Inc.
 #
+
+import datetime
+
 from pykickstart.errors import KickstartParseError
 
-from pyanaconda.core.i18n import _
+from pyanaconda.anaconda_loggers import get_module_logger
 from pyanaconda.core.configuration.anaconda import conf
-from pyanaconda.core.constants import TIME_SOURCE_SERVER, TIME_SOURCE_POOL
+from pyanaconda.core.constants import (
+    TIME_SOURCE_POOL,
+    TIME_SOURCE_SERVER,
+    TIMEZONE_PRIORITY_DEFAULT,
+    TIMEZONE_PRIORITY_KICKSTART,
+    TIMEZONE_PRIORITY_USER,
+)
 from pyanaconda.core.dbus import DBus
+from pyanaconda.core.i18n import _
 from pyanaconda.core.signal import Signal
 from pyanaconda.modules.common.base import KickstartService
 from pyanaconda.modules.common.constants.services import TIMEZONE
-from pyanaconda.modules.common.structures.timezone import TimeSourceData, GeolocationData
-from pyanaconda.timezone import NTP_PACKAGE
 from pyanaconda.modules.common.containers import TaskContainer
 from pyanaconda.modules.common.structures.requirement import Requirement
+from pyanaconda.modules.common.structures.timezone import (
+    GeolocationData,
+    TimeSourceData,
+)
 from pyanaconda.modules.timezone.initialization import GeolocationTask
-from pyanaconda.modules.timezone.installation import ConfigureHardwareClockTask, \
-    ConfigureNTPTask, ConfigureTimezoneTask
+from pyanaconda.modules.timezone.installation import (
+    ConfigureHardwareClockTask,
+    ConfigureNTPTask,
+    ConfigureTimezoneTask,
+)
 from pyanaconda.modules.timezone.kickstart import TimezoneKickstartSpecification
 from pyanaconda.modules.timezone.timezone_interface import TimezoneInterface
+from pyanaconda.timezone import (
+    NTP_PACKAGE,
+    get_all_regions_and_timezones,
+    get_timezone,
+    set_system_date_time,
+)
 
-from pyanaconda.anaconda_loggers import get_module_logger
 log = get_module_logger(__name__)
 
 
@@ -47,6 +67,7 @@ class TimezoneService(KickstartService):
         super().__init__()
         self.timezone_changed = Signal()
         self._timezone = "America/New_York"
+        self._priority = TIMEZONE_PRIORITY_DEFAULT
 
         self.geolocation_result_changed = Signal()
         self._geoloc_result = GeolocationData()
@@ -73,18 +94,9 @@ class TimezoneService(KickstartService):
 
     def process_kickstart(self, data):
         """Process the kickstart data."""
-        self.set_timezone(data.timezone.timezone)
+        self.set_timezone_with_priority(data.timezone.timezone, TIMEZONE_PRIORITY_KICKSTART)
         self.set_is_utc(data.timezone.isUtc)
-        self.set_ntp_enabled(not data.timezone.nontp)
-
         sources = []
-
-        for hostname in data.timezone.ntpservers:
-            source = TimeSourceData()
-            source.type = TIME_SOURCE_SERVER
-            source.hostname = hostname
-            source.options = ["iburst"]
-            sources.append(source)
 
         for source_data in data.timesource.dataList():
             if source_data.ntp_disable:
@@ -148,9 +160,36 @@ class TimezoneService(KickstartService):
 
     def set_timezone(self, timezone):
         """Set the timezone."""
+        self.set_timezone_with_priority(timezone, TIMEZONE_PRIORITY_USER)
+
+    def set_timezone_with_priority(self, timezone, priority):
+        """Set the timezone with priority.
+
+        Sets the timezone only if the priority is higher than the previous priority.
+        """
+        if priority < self._priority:
+            log.debug("Timezone did not change %s -> %s due to too low priority: %d > %d.",
+                      self._timezone, timezone, self._priority, priority)
+            return
+
         self._timezone = timezone
+        self._priority = priority
         self.timezone_changed.emit()
         log.debug("Timezone is set to %s.", timezone)
+
+    def get_all_valid_timezones(self):
+        """Get all valid timezones.
+
+        :return: list of valid timezones
+        :rtype: list of str
+        """
+        timezone_dict = get_all_regions_and_timezones()
+        # convert to a dict of lists for easier transfer over DBus
+        # - change the nested sets to lists
+        new_timezone_dict = {}
+        for region in timezone_dict:
+            new_timezone_dict[region] = list(timezone_dict[region])
+        return new_timezone_dict
 
     @property
     def is_utc(self):
@@ -244,3 +283,30 @@ class TimezoneService(KickstartService):
         :return GeolocationData: result of the lookup, empty if not ready yet
         """
         return self._geoloc_result
+
+    def get_system_date_time(self):
+        """Get system time as a ISO 8601 formatted string.
+
+        :return: system time as ISO 8601 formatted string
+        :rtype: str
+        """
+        # convert to the expected tzinfo format via get_timezone()
+        return datetime.datetime.now(get_timezone(self._timezone)).isoformat()
+
+    def set_system_date_time(self, date_time_spec):
+        """Set system time based on a ISO 8601 formatted string.
+
+        :param str date_time_spec: ISO 8601 time specification to use
+        """
+        log.debug("Setting system time to: %s, with timezone: %s", date_time_spec, self._timezone)
+        # first convert the ISO 8601 time string to a Python date object
+        date = datetime.datetime.fromisoformat(date_time_spec)
+        # set the date to the system
+        set_system_date_time(
+            year=date.year,
+            month=date.month,
+            day=date.day,
+            hour=date.hour,
+            minute=date.minute,
+            tz=self._timezone
+        )

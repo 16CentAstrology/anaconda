@@ -19,15 +19,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        {% if branched_fedora_version is defined and branched_fedora_version %}
-        branch: ['master', 'rhel-8', 'rhel-9', 'fedora-{$ branched_fedora_version $}']
-        {% else %}
-        branch: ['master', 'rhel-8', 'rhel-9']
-        {% endif %}
+        branch: ['master'{% for branch in supported_branches %}, '{$ branch|first $}'{% endfor %}]
 
     steps:
       - name: Check out repo
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           ref: ${{ matrix.branch }}
 
@@ -36,11 +32,12 @@ jobs:
           make -f Makefile.am anaconda-release-build
 
       - name: Run the build in the container
+        id: build
         run: |
           make -f Makefile.am container-release | tee release.log
 
       - name: Check logs for malformed translations
-        continue-on-error: true
+        if: ${{ steps.build.outcome == 'success' }}
         run: |
           errors=$(grep -E "Unable to compile [^:]+: .*" release.log || true)  # grep exits with 1 if no lines found
           if [ -n "$errors" ]; then
@@ -52,7 +49,7 @@ jobs:
           fi
 
       - name: Check if translation files are present in tarball
-        continue-on-error: true
+        if: ${{ always() && steps.build.outcome == 'success' }}
         run: |
           tarfiles=$(tar -tf anaconda-*.tar.bz2)
           missing=0

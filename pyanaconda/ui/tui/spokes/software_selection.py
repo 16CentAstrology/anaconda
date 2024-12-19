@@ -16,24 +16,39 @@
 # License and may only be used or replicated with the express permission of
 # Red Hat, Inc.
 #
-from pyanaconda.flags import flags
-from pyanaconda.ui.categories.software import SoftwareCategory
-from pyanaconda.ui.context import context
-from pyanaconda.ui.lib.software import get_software_selection_status, \
-    is_software_selection_complete, SoftwareSelectionCache
-from pyanaconda.ui.tui.spokes import NormalTUISpoke
-from pyanaconda.core.threads import thread_manager
-from pyanaconda.core.i18n import N_, _
-from pyanaconda.core.constants import THREAD_PAYLOAD, THREAD_CHECK_SOFTWARE, \
-    THREAD_SOFTWARE_WATCHER, PAYLOAD_TYPE_DNF
-
 from simpleline.render.containers import ListColumnContainer
 from simpleline.render.prompt import Prompt
 from simpleline.render.screen import InputState
 from simpleline.render.screen_handler import ScreenHandler
-from simpleline.render.widgets import TextWidget, CheckboxWidget
+from simpleline.render.widgets import CheckboxWidget, TextWidget
 
 from pyanaconda.anaconda_loggers import get_module_logger
+from pyanaconda.core.configuration.anaconda import conf
+from pyanaconda.core.constants import (
+    PAYLOAD_TYPE_DNF,
+    THREAD_CHECK_SOFTWARE,
+    THREAD_PAYLOAD,
+    THREAD_SOFTWARE_WATCHER,
+)
+from pyanaconda.core.i18n import N_, _
+from pyanaconda.core.threads import thread_manager
+from pyanaconda.flags import flags
+from pyanaconda.ui.categories.software import SoftwareCategory
+from pyanaconda.ui.context import context
+from pyanaconda.ui.lib.software import (
+    FEATURE_64K,
+    KernelFeatures,
+    SoftwareSelectionCache,
+    get_available_kernel_features,
+    get_environment_data,
+    get_group_data,
+    get_kernel_from_properties,
+    get_kernel_titles_and_descriptions,
+    get_software_selection_status,
+    is_software_selection_complete,
+)
+from pyanaconda.ui.tui.spokes import NormalTUISpoke
+
 log = get_module_logger(__name__)
 
 __all__ = ["SoftwareSpoke"]
@@ -68,15 +83,12 @@ class SoftwareSpoke(NormalTUISpoke):
         self._warnings = []
 
         # Get the packages configuration.
-        self._selection_cache = SoftwareSelectionCache(self._dnf_manager)
+        self._selection_cache = SoftwareSelectionCache(self.payload.proxy)
+        self._kernel_selection = None
+        self._available_kernels = None
 
         # Are we taking values (package list) from a kickstart file?
         self._kickstarted = flags.automatedInstall and self.payload.proxy.PackagesKickstarted
-
-    @property
-    def _dnf_manager(self):
-        """The DNF manager."""
-        return self.payload.dnf_manager
 
     @property
     def _selection(self):
@@ -97,6 +109,9 @@ class SoftwareSpoke(NormalTUISpoke):
         """Initialize the spoke in a separate thread."""
         thread_manager.wait(THREAD_PAYLOAD)
 
+        self._available_kernels = get_available_kernel_features(self.payload.proxy)
+        self._kernel_selection = dict.fromkeys(self._available_kernels, False)
+
         # Initialize and check the software selection.
         self._initialize_selection()
 
@@ -112,7 +127,7 @@ class SoftwareSpoke(NormalTUISpoke):
         if not self._kickstarted:
             # Use the default environment.
             self._selection_cache.select_environment(
-                self._dnf_manager.default_environment
+                self.payload.proxy.GetDefaultEnvironment()
             )
 
             # Apply the default selection.
@@ -169,7 +184,7 @@ class SoftwareSpoke(NormalTUISpoke):
             return _("Warning checking software selection")
 
         return get_software_selection_status(
-            dnf_manager=self._dnf_manager,
+            dnf_proxy=self.payload.proxy,
             selection=self._selection,
             kickstarted=self._kickstarted
         )
@@ -181,7 +196,7 @@ class SoftwareSpoke(NormalTUISpoke):
             and not self._errors \
             and not self._source_has_changed \
             and is_software_selection_complete(
-                dnf_manager=self._dnf_manager,
+                dnf_proxy=self.payload.proxy,
                 selection=self._selection,
                 kickstarted=self._kickstarted
             )
@@ -195,7 +210,7 @@ class SoftwareSpoke(NormalTUISpoke):
         thread_manager.wait(THREAD_PAYLOAD)
 
         # Create a new software selection cache.
-        self._selection_cache = SoftwareSelectionCache(self._dnf_manager)
+        self._selection_cache = SoftwareSelectionCache(self._payload.proxy)
         self._selection_cache.apply_selection_data(self._selection)
 
         return True
@@ -218,7 +233,7 @@ class SoftwareSpoke(NormalTUISpoke):
         )
 
         for environment in self._selection_cache.available_environments:
-            data = self._dnf_manager.get_environment_data(environment)
+            data = get_environment_data(self.payload.proxy, environment)
             selected = self._selection_cache.is_environment_selected(environment)
 
             widget = CheckboxWidget(
@@ -257,7 +272,8 @@ class SoftwareSpoke(NormalTUISpoke):
                     self.data,
                     self.storage,
                     self.payload,
-                    self._selection_cache
+                    self._selection_cache,
+                    self._kernel_selection
                 )
                 ScreenHandler.push_screen_modal(spoke)
                 self.apply()
@@ -274,6 +290,19 @@ class SoftwareSpoke(NormalTUISpoke):
         selection = self._selection_cache.get_selection_data()
         log.debug("Setting new software selection: %s", selection)
 
+        # Processing chosen kernel
+        if conf.ui.show_kernel_options:
+            self._available_kernels = get_available_kernel_features(self.payload.proxy)
+            feature_64k = self._available_kernels[FEATURE_64K] and \
+                self._kernel_selection[FEATURE_64K]
+            features = KernelFeatures(feature_64k)
+            kernel = get_kernel_from_properties(features)
+            if kernel:
+                log.debug("Selected kernel package: %s", kernel)
+                selection.packages.append(kernel)
+                selection.excluded_packages.append("kernel")
+
+        log.debug("Setting new software selection: %s", self._selection)
         self.payload.set_packages_selection(selection)
 
     def execute(self):
@@ -286,7 +315,6 @@ class SoftwareSpoke(NormalTUISpoke):
     def _check_software_selection(self):
         """Check the software selection."""
         report = self.payload.check_software_selection(self._selection)
-
         self._errors = list(report.error_messages)
         self._warnings = list(report.warning_messages)
         print("\n".join(report.get_messages()))
@@ -303,16 +331,12 @@ class AdditionalSoftwareSpoke(NormalTUISpoke):
     """The spoke for choosing the additional software."""
     category = SoftwareCategory
 
-    def __init__(self, data, storage, payload, selection_cache):
+    def __init__(self, data, storage, payload, selection_cache, kernel_selection):
         super().__init__(data, storage, payload)
         self.title = N_("Software selection")
         self._container = None
         self._selection_cache = selection_cache
-
-    @property
-    def _dnf_manager(self):
-        """The DNF manager."""
-        return self.payload.dnf_manager
+        self._kernel_selection = kernel_selection
 
     def refresh(self, args=None):
         """Refresh the screen."""
@@ -325,7 +349,7 @@ class AdditionalSoftwareSpoke(NormalTUISpoke):
         )
 
         for group in self._selection_cache.available_groups:
-            data = self._dnf_manager.get_group_data(group)
+            data = get_group_data(self.payload.proxy, group)
             selected = self._selection_cache.is_group_selected(group)
 
             widget = CheckboxWidget(
@@ -353,11 +377,81 @@ class AdditionalSoftwareSpoke(NormalTUISpoke):
         else:
             self._selection_cache.deselect_group(group)
 
+    def _show_kernel_features_screen(self, kernels):
+        """Returns True if at least one non-standard kernel is available.
+        """
+        if not conf.ui.show_kernel_options:
+            return False
+        for val in kernels.values():
+            if val:
+                return True
+        return False
+
     def input(self, args, key):
         if self._container.process_user_input(key):
             return InputState.PROCESSED_AND_REDRAW
-        else:
-            return super().input(args, key)
+        if key.lower() == Prompt.CONTINUE:
+            available_kernels = get_available_kernel_features(self.payload.proxy)
+            if self._show_kernel_features_screen(available_kernels):
+                spoke = KernelSelectionSpoke(self.data, self.storage, self.payload,
+                                             self._selection_cache, self._kernel_selection,
+                                             available_kernels)
+                ScreenHandler.push_screen_modal(spoke)
+            self.execute()
+            self.close()
+            return InputState.PROCESSED
+
+        return super().input(args, key)
+
+    def apply(self):
+        pass
+
+
+class KernelSelectionSpoke(NormalTUISpoke):
+    """A subspoke for selecting kernel features.
+    """
+    def __init__(self, data, storage, payload, selection_cache,
+                 _kernel_selection, available_kernels):
+        super().__init__(data, storage, payload)
+        self.title = N_("Kernel Options")
+        self._container = None
+        self._selection_cache = selection_cache
+        self._kernel_selection = _kernel_selection
+        self._available_kernels = available_kernels
+
+    def refresh(self, args=None):
+        NormalTUISpoke.refresh(self)
+
+        # Retrieving translated UI strings
+        labels = get_kernel_titles_and_descriptions()
+
+        # Updating kernel availability
+        self._available_kernels = get_available_kernel_features(self.payload.proxy)
+        self._container = ListColumnContainer(2, columns_width=38, spacing=2)
+
+        # Rendering kernel checkboxes
+        for (name, val) in self._kernel_selection.items():
+            if not self._available_kernels[name]:
+                continue
+            (title, text) = labels[name]
+            widget = CheckboxWidget(title="%s" % title, text="%s" % text, completed=val)
+            self._container.add(widget, callback=self._set_kernel_callback, data=name)
+
+        self.window.add_with_separator(TextWidget(_("Kernel options")))
+        self.window.add_with_separator(self._container)
+
+    def _set_kernel_callback(self, data):
+        self._kernel_selection[data] = not self._kernel_selection[data]
+
+    def input(self, args, key):
+        if self._container.process_user_input(key):
+            return InputState.PROCESSED_AND_REDRAW
+
+        if key.lower() == Prompt.CONTINUE:
+            self.close()
+            return InputState.PROCESSED
+
+        return super().input(args, key)
 
     def apply(self):
         pass

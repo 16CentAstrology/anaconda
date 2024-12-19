@@ -18,24 +18,37 @@
 #
 import sys
 
+import gi
 from blivet.size import Size
+
 from pyanaconda.anaconda_loggers import get_module_logger
-from pyanaconda.core import util, constants
+from pyanaconda.core import constants, util
 from pyanaconda.core.async_utils import async_action_nowait, async_action_wait
 from pyanaconda.core.configuration.anaconda import conf
-from pyanaconda.core.constants import CLEAR_PARTITIONS_NONE, BOOTLOADER_ENABLED, \
-    STORAGE_METADATA_RATIO, WARNING_NO_DISKS_SELECTED, WARNING_NO_DISKS_DETECTED, \
-    PARTITIONING_METHOD_AUTOMATIC, PARTITIONING_METHOD_INTERACTIVE, PARTITIONING_METHOD_BLIVET
-from pyanaconda.core.i18n import _, C_, CN_
+from pyanaconda.core.constants import (
+    BOOTLOADER_ENABLED,
+    CLEAR_PARTITIONS_NONE,
+    PARTITIONING_METHOD_AUTOMATIC,
+    PARTITIONING_METHOD_BLIVET,
+    PARTITIONING_METHOD_INTERACTIVE,
+    STORAGE_METADATA_RATIO,
+    WARNING_NO_DISKS_DETECTED,
+    WARNING_NO_DISKS_SELECTED,
+)
+from pyanaconda.core.i18n import C_, CN_, _
+from pyanaconda.core.storage import suggest_swap_size
+from pyanaconda.core.threads import thread_manager
 from pyanaconda.flags import flags
-from pyanaconda.modules.common.constants.objects import DISK_SELECTION, DISK_INITIALIZATION, \
-    BOOTLOADER, DEVICE_TREE
+from pyanaconda.modules.common.constants.objects import (
+    BOOTLOADER,
+    DEVICE_TREE,
+    DISK_INITIALIZATION,
+    DISK_SELECTION,
+)
 from pyanaconda.modules.common.constants.services import STORAGE
 from pyanaconda.modules.common.structures.partitioning import PartitioningRequest
 from pyanaconda.modules.common.structures.storage import DeviceData
 from pyanaconda.modules.common.structures.validation import ValidationReport
-from pyanaconda.core.storage import suggest_swap_size
-from pyanaconda.core.threads import thread_manager
 from pyanaconda.ui.categories.system import SystemCategory
 from pyanaconda.ui.communication import hubQ
 from pyanaconda.ui.gui.spokes import NormalSpoke
@@ -45,22 +58,39 @@ from pyanaconda.ui.gui.spokes.lib.detailederror import DetailedErrorDialog
 from pyanaconda.ui.gui.spokes.lib.passphrase import PassphraseDialog
 from pyanaconda.ui.gui.spokes.lib.refresh import RefreshDialog
 from pyanaconda.ui.gui.spokes.lib.resize import ResizeDialog
+from pyanaconda.ui.gui.spokes.lib.storage_dialogs import (
+    DASD_FORMAT_NO_CHANGE,
+    DASD_FORMAT_REFRESH,
+    DASD_FORMAT_RETURN_TO_HUB,
+    RESPONSE_CANCEL,
+    RESPONSE_MODIFY_SW,
+    RESPONSE_OK,
+    RESPONSE_QUIT,
+    RESPONSE_RECLAIM,
+    NeedSpaceDialog,
+    NoSpaceDialog,
+)
 from pyanaconda.ui.gui.utils import ignoreEscape
 from pyanaconda.ui.helpers import StorageCheckHandler
 from pyanaconda.ui.lib.format_dasd import DasdFormatting
-from pyanaconda.ui.lib.storage import find_partitioning, apply_partitioning, \
-    select_default_disks, apply_disk_selection, get_disks_summary, create_partitioning, \
-    is_local_disk, filter_disks_by_names, reset_storage, is_passphrase_required, \
-    set_required_passphrase
-from pyanaconda.ui.gui.spokes.lib.storage_dialogs import NeedSpaceDialog, NoSpaceDialog, \
-    RESPONSE_CANCEL, RESPONSE_OK, RESPONSE_MODIFY_SW, RESPONSE_RECLAIM, RESPONSE_QUIT, \
-    DASD_FORMAT_NO_CHANGE, DASD_FORMAT_REFRESH, DASD_FORMAT_RETURN_TO_HUB
+from pyanaconda.ui.lib.storage import (
+    apply_disk_selection,
+    apply_partitioning,
+    create_partitioning,
+    filter_disks_by_names,
+    find_partitioning,
+    get_disks_summary,
+    is_local_disk,
+    is_passphrase_required,
+    reset_storage,
+    select_default_disks,
+    set_required_passphrase,
+)
 
-import gi
 gi.require_version("Gtk", "3.0")
 gi.require_version("Gdk", "3.0")
 gi.require_version("AnacondaWidgets", "3.4")
-from gi.repository import Gdk, AnacondaWidgets, Gtk
+from gi.repository import AnacondaWidgets, Gdk, Gtk
 
 log = get_module_logger(__name__)
 
@@ -160,8 +190,11 @@ class StorageSpoke(NormalSpoke, StorageCheckHandler):
     def _is_blivet_gui_supported(self):
         """Is the partitioning with blivet-gui supported?"""
         try:
-            import pyanaconda.ui.gui.spokes.blivet_gui  # pylint:disable=unused-import
-        except ImportError:
+            # pylint:disable=unused-import
+            # ruff: noqa: F401
+            import pyanaconda.ui.gui.spokes.blivet_gui
+        except ImportError as e:
+            log.info("Blivet-GUI is not supported: %s", str(e))
             return False
 
         return True
@@ -391,25 +424,24 @@ class StorageSpoke(NormalSpoke, StorageCheckHandler):
         # of them, we do not display them in the box by default.  Instead, only
         # those selected in the filter UI are displayed.  This means refresh
         # needs to know to create and destroy overviews as appropriate.
-        for device_name in self._available_disks:
+        for disk_id in self._available_disks:
 
             # Get the device data.
             device_data = DeviceData.from_structure(
-                self._device_tree.GetDeviceData(device_name)
+                self._device_tree.GetDeviceData(disk_id)
             )
 
             if is_local_disk(device_data.type):
                 # Add all available local disks.
                 self._add_disk_overview(device_data, self._local_disks_box)
 
-            elif device_name in self._selected_disks:
+            elif disk_id in self._selected_disks:
                 # Add only selected advanced disks.
                 self._add_disk_overview(device_data, self._specialized_disks_box)
 
         # update the selections in the ui
         for overview in self.local_overviews + self.advanced_overviews:
-            name = overview.get_property("name")
-            overview.set_chosen(name in self._selected_disks)
+            overview.set_chosen(overview.device_id in self._selected_disks)
 
         # Update the encryption checkbox.
         if self._partitioning_request.encrypted:
@@ -462,15 +494,11 @@ class StorageSpoke(NormalSpoke, StorageCheckHandler):
                 wwpn=device_data.attrs.get("wwpn", ""),
                 lun=device_data.attrs.get("fcp-lun", "")
             )
-        elif device_data.type == "nvdimm":
-            description = _("NVDIMM device {namespace}").format(
-                namespace=device_data.attrs.get("namespace", "")
-            )
         else:
             description = device_data.description
 
         kind = "drive-removable-media" if device_data.removable else "drive-harddisk"
-        free_space = self._device_tree.GetDiskFreeSpace([device_data.name])
+        free_space = self._device_tree.GetDiskFreeSpace([device_data.device_id])
         serial_number = device_data.attrs.get("serial") or None
 
         overview = AnacondaWidgets.DiskOverview(
@@ -479,11 +507,12 @@ class StorageSpoke(NormalSpoke, StorageCheckHandler):
             str(Size(device_data.size)),
             _("{} free").format(str(Size(free_space))),
             device_data.name,
+            device_data.device_id,
             serial_number
         )
 
         box.pack_start(overview, False, False, 0)
-        overview.set_chosen(device_data.name in self._selected_disks)
+        overview.set_chosen(device_data.device_id in self._selected_disks)
         overview.connect("button-press-event", self._on_disk_clicked)
         overview.connect("key-release-event", self._on_disk_clicked)
         overview.connect("focus-in-event", self._on_disk_focus_in)
@@ -569,13 +598,13 @@ class StorageSpoke(NormalSpoke, StorageCheckHandler):
         """ Update self.selected_disks based on the UI. """
         for overview in self.local_overviews + self.advanced_overviews:
             selected = overview.get_chosen()
-            name = overview.get_property("name")
+            disk_id = overview.device_id
 
-            if selected and name not in self._selected_disks:
-                self._selected_disks.append(name)
+            if selected and disk_id not in self._selected_disks:
+                self._selected_disks.append(disk_id)
 
-            if not selected and name in self._selected_disks:
-                self._selected_disks.remove(name)
+            if not selected and disk_id in self._selected_disks:
+                self._selected_disks.remove(disk_id)
 
     # signal handlers
     def on_summary_clicked(self, button):
@@ -591,8 +620,7 @@ class StorageSpoke(NormalSpoke, StorageCheckHandler):
 
         # update the UI to reflect changes to self.selected_disks
         for overview in self.local_overviews + self.advanced_overviews:
-            name = overview.get_property("name")
-            overview.set_chosen(name in self._selected_disks)
+            overview.set_chosen(overview.device_id in self._selected_disks)
 
         self._update_summary()
 

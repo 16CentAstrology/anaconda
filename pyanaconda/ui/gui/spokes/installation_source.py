@@ -23,46 +23,75 @@ import time
 from pyanaconda.anaconda_loggers import get_module_logger
 from pyanaconda.core import constants
 from pyanaconda.core.configuration.anaconda import conf
-from pyanaconda.core.constants import PAYLOAD_TYPE_DNF, SOURCE_TYPE_HDD, SOURCE_TYPE_URL, \
-    SOURCE_TYPE_CDROM, SOURCE_TYPE_NFS, SOURCE_TYPE_HMC, URL_TYPE_BASEURL, \
-    SOURCE_TYPE_CLOSEST_MIRROR, SOURCE_TYPE_CDN, PAYLOAD_STATUS_SETTING_SOURCE, \
-    PAYLOAD_STATUS_INVALID_SOURCE, PAYLOAD_STATUS_CHECKING_SOFTWARE, SOURCE_TYPE_REPO_PATH, \
-    DRACUT_REPO_DIR
-from pyanaconda.core.i18n import _, CN_
+from pyanaconda.core.constants import (
+    DRACUT_REPO_DIR,
+    PAYLOAD_STATUS_CHECKING_SOFTWARE,
+    PAYLOAD_STATUS_INVALID_SOURCE,
+    PAYLOAD_STATUS_SETTING_SOURCE,
+    PAYLOAD_TYPE_DNF,
+    SOURCE_TYPE_CDN,
+    SOURCE_TYPE_CDROM,
+    SOURCE_TYPE_CLOSEST_MIRROR,
+    SOURCE_TYPE_HDD,
+    SOURCE_TYPE_HMC,
+    SOURCE_TYPE_NFS,
+    SOURCE_TYPE_REPO_PATH,
+    SOURCE_TYPE_URL,
+    URL_TYPE_BASEURL,
+)
+from pyanaconda.core.i18n import C_, CN_, _
 from pyanaconda.core.path import join_paths
-from pyanaconda.core.payload import parse_nfs_url, create_nfs_url, parse_hdd_url
-from pyanaconda.core.regexes import URL_PARSE, HOSTNAME_PATTERN_WITHOUT_ANCHORS
+from pyanaconda.core.payload import create_nfs_url, parse_hdd_url, parse_nfs_url
+from pyanaconda.core.regexes import HOSTNAME_PATTERN_WITHOUT_ANCHORS, URL_PARSE
+from pyanaconda.core.threads import thread_manager
 from pyanaconda.flags import flags
 from pyanaconda.modules.common.constants.objects import DEVICE_TREE
-from pyanaconda.modules.common.constants.services import NETWORK, STORAGE
-from pyanaconda.modules.common.constants.services import SUBSCRIPTION
+from pyanaconda.modules.common.constants.services import NETWORK, STORAGE, SUBSCRIPTION
 from pyanaconda.modules.common.structures.payload import RepoConfigurationData
-from pyanaconda.modules.common.structures.storage import DeviceData
+from pyanaconda.modules.common.structures.storage import DeviceData, DeviceFormatData
 from pyanaconda.modules.common.util import is_module_available
 from pyanaconda.modules.payloads.source.utils import verify_valid_repository
 from pyanaconda.payload import utils as payload_utils
 from pyanaconda.payload.image import find_optical_install_media
 from pyanaconda.payload.manager import payloadMgr
-from pyanaconda.core.threads import thread_manager
 from pyanaconda.ui.categories.software import SoftwareCategory
 from pyanaconda.ui.communication import hubQ
 from pyanaconda.ui.context import context
 from pyanaconda.ui.gui.helpers import GUISpokeInputCheckHandler
 from pyanaconda.ui.gui.spokes import NormalSpoke
-from pyanaconda.ui.gui.spokes.lib.additional_repositories import AdditionalRepositoriesSection
-from pyanaconda.ui.gui.spokes.lib.installation_source_helpers import ProxyDialog, \
-    MediaCheckDialog, IsoChooser, PROTOCOL_HTTP, PROTOCOL_HTTPS, PROTOCOL_FTP, PROTOCOL_NFS, \
-    PROTOCOL_MIRROR, CLICK_FOR_DETAILS
-from pyanaconda.ui.gui.utils import blockedHandler, fire_gtk_action
-from pyanaconda.ui.gui.utils import gtk_call_once, really_hide, really_show
+from pyanaconda.ui.gui.spokes.lib.additional_repositories import (
+    AdditionalRepositoriesSection,
+)
+from pyanaconda.ui.gui.spokes.lib.installation_source_helpers import (
+    CLICK_FOR_DETAILS,
+    PROTOCOL_FTP,
+    PROTOCOL_HTTP,
+    PROTOCOL_HTTPS,
+    PROTOCOL_MIRROR,
+    PROTOCOL_NFS,
+    IsoChooser,
+    MediaCheckDialog,
+    ProxyDialog,
+)
+from pyanaconda.ui.gui.utils import (
+    blockedHandler,
+    fire_gtk_action,
+    gtk_call_once,
+    really_hide,
+    really_show,
+)
 from pyanaconda.ui.helpers import InputCheck, SourceSwitchHandler
-from pyanaconda.ui.lib.payload import find_potential_hdiso_sources, get_hdiso_source_info, \
-    get_hdiso_source_description
+from pyanaconda.ui.lib.payload import (
+    find_potential_hdiso_sources,
+    get_hdiso_source_description,
+    get_hdiso_source_info,
+)
 from pyanaconda.ui.lib.subscription import switch_source
 
 log = get_module_logger(__name__)
 
 import gi
+
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk
 
@@ -122,7 +151,7 @@ class SourceSpoke(NormalSpoke, GUISpokeInputCheckHandler, SourceSwitchHandler):
         # attached there is no need to refresh the installation source,
         # as without the subscription tokens the refresh would fail anyway.
         if cdn_source and not self.subscribed:
-            log.debug("CDN source but no subscribtion attached - skipping payload restart.")
+            log.debug("CDN source but no subscription attached - skipping payload restart.")
         elif source_changed or repo_changed or self._error:
             payloadMgr.start(self.payload)
         else:
@@ -312,6 +341,22 @@ class SourceSpoke(NormalSpoke, GUISpokeInputCheckHandler, SourceSwitchHandler):
         return subscribed
 
     @property
+    def registered_to_satellite(self):
+        """Report if the system is registered to a Satellite instance.
+
+        NOTE: This will be always False when the Subscription
+              module is not available.
+
+        :return: True if registered to Satellite, False otherwise
+        :rtype: bool
+        """
+        registered_to_satellite = False
+        if is_module_available(SUBSCRIPTION):
+            subscription_proxy = SUBSCRIPTION.get_proxy()
+            registered_to_satellite = subscription_proxy.IsRegisteredToSatellite
+        return registered_to_satellite
+
+    @property
     def status(self):
         # When CDN is selected as installation source and system
         # is not yet subscribed, the automatic repo refresh will
@@ -326,6 +371,11 @@ class SourceSpoke(NormalSpoke, GUISpokeInputCheckHandler, SourceSwitchHandler):
         if cdn_source and not self.subscribed:
             source_proxy = self.payload.get_source_proxy()
             return source_proxy.Description
+
+        if cdn_source and self.subscribed and self.registered_to_satellite:
+            # override the regular CDN source name to make it clear Satellite
+            # provided repositories are being used
+            return _("Satellite")
 
         if thread_manager.get(constants.THREAD_CHECK_SOFTWARE):
             return _(PAYLOAD_STATUS_CHECKING_SOFTWARE)
@@ -382,11 +432,9 @@ class SourceSpoke(NormalSpoke, GUISpokeInputCheckHandler, SourceSwitchHandler):
 
         # Include the section with additional repositories.
         self._additional_repositories = AdditionalRepositoriesSection(
-            self.data,
-            self.payload,
-            self.window
+            payload=self.payload,
+            window=self.window
         )
-        main_box.add(self._additional_repositories.widget)
 
     def initialize(self):
         NormalSpoke.initialize(self)
@@ -421,7 +469,7 @@ class SourceSpoke(NormalSpoke, GUISpokeInputCheckHandler, SourceSwitchHandler):
 
         # It is possible that the payload manager is finished by now. In that case,
         # trigger the failed callback manually to set up the error messages.
-        if not payloadMgr.is_running and not self.payload.report.is_valid():
+        if not payloadMgr.is_running and not payloadMgr.report.is_valid():
             self._on_payload_failed()
 
         # Report progress messages of the payload manager.
@@ -448,7 +496,7 @@ class SourceSpoke(NormalSpoke, GUISpokeInputCheckHandler, SourceSwitchHandler):
             "check their configurations."
         )
 
-        if self.payload.report.get_messages():
+        if payloadMgr.report.get_messages():
             self._error += _(CLICK_FOR_DETAILS)
 
     def _on_payload_succeeded(self):
@@ -500,7 +548,7 @@ class SourceSpoke(NormalSpoke, GUISpokeInputCheckHandler, SourceSwitchHandler):
             gtk_call_once(self._dracut_button.set_no_show_all, False)
         # Enable the CD-ROM option if requested.
         elif source_type == SOURCE_TYPE_CDROM:
-            self._cdrom = source_proxy.DeviceName
+            self._cdrom = source_proxy.DeviceID
             self._show_cdrom_box_with_device(self._cdrom)
         # Enable the local source option if available.
         elif verify_valid_repository(DRACUT_REPO_DIR):
@@ -541,14 +589,19 @@ class SourceSpoke(NormalSpoke, GUISpokeInputCheckHandler, SourceSwitchHandler):
         # report that the source spoke has been initialized
         self.initialize_done()
 
-    def _show_cdrom_box_with_device(self, device_name):
-        if not device_name:
+    def _show_cdrom_box_with_device(self, device_id):
+        if not device_id:
             return
 
-        device_data = DeviceData.from_structure(
-            self._device_tree.GetDeviceData(device_name)
+        device_format_data = DeviceFormatData.from_structure(
+            self._device_tree.GetFormatData(device_id)
         )
-        device_label = device_data.attrs.get("label", "")
+        device_label = device_format_data.attrs.get("label", "")
+
+        device_data = DeviceData.from_structure(
+            self._device_tree.GetDeviceData(device_id)
+        )
+        device_name = device_data.name
         self._show_cdrom_box(device_name, device_label)
 
     def _show_cdrom_box(self, device_name, device_label):
@@ -580,7 +633,6 @@ class SourceSpoke(NormalSpoke, GUISpokeInputCheckHandler, SourceSwitchHandler):
         store.clear()
 
         added = False
-        idx = 0
 
         active_idx = 0
         active_name = None
@@ -591,16 +643,17 @@ class SourceSpoke(NormalSpoke, GUISpokeInputCheckHandler, SourceSwitchHandler):
         if source_type == SOURCE_TYPE_HDD:
             active_name = source_proxy.GetDevice()
 
-        for device_name in find_potential_hdiso_sources():
-            device_info = get_hdiso_source_info(self._device_tree, device_name)
+        for idx, device_id in enumerate(find_potential_hdiso_sources()):
+            device_info = get_hdiso_source_info(self._device_tree, device_id)
             device_desc = get_hdiso_source_description(device_info)
+            device_data = DeviceData.from_structure(self._device_tree.GetDeviceData(device_id))
+            device_name = device_data.name
             store.append([device_name, device_desc])
 
             if device_name == active_name:
                 active_idx = idx
 
             added = True
-            idx += 1
 
         # Again, only display these widgets if an HDISO source was found.
         self._iso_box.set_no_show_all(not added)
@@ -726,6 +779,26 @@ class SourceSpoke(NormalSpoke, GUISpokeInputCheckHandler, SourceSwitchHandler):
 
         # Update the URL entry validation now that we're done messing with sensitivites
         self._update_url_entry_check()
+
+        # If subscription module is available we might need to refresh the label
+        # of the CDN/Satellite radio button, so that it properly describes what is providing
+        # the repositories available after registration.
+        #
+        # For registration to Red Hat hosted infrastructure (also called Hosted Candlepin) the
+        # global Red Hat CDN efficiently provides quick access to the repositories to customers
+        # across the world over the public Internet.
+        #
+        # If registered to a customer Satellite instance, it is the Satellite instance itself that
+        # provides the software repositories.
+        #
+        # This is an important distinction as Satellite instances are often used in environments
+        # not connected to the public Internet, so seeing the installation source being provided
+        # by Red Hat CDN which the machine might not be able to reach could be very confusing.
+        if is_module_available(SUBSCRIPTION):
+            if self.registered_to_satellite:
+                self._cdn_button.set_label(C_("GUI|Software Source", "_Satellite"))
+            else:
+                self._cdn_button.set_label(C_("GUI|Software Source", "Red Hat _CDN"))
 
         # Show the info bar with an error message if any.
         # This error message has the highest priority.
@@ -862,7 +935,7 @@ class SourceSpoke(NormalSpoke, GUISpokeInputCheckHandler, SourceSwitchHandler):
 
     def on_info_bar_clicked(self, *args):
         log.debug("info bar clicked: %s (%s)", self._error, args)
-        messages = self.payload.report.get_messages()
+        messages = payloadMgr.report.get_messages()
 
         if not messages:
             return

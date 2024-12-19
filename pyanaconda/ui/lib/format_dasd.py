@@ -19,20 +19,20 @@
 #
 from blivet import arch
 
-from pyanaconda.flags import flags
-from pyanaconda.core.signal import Signal
+from pyanaconda.anaconda_loggers import get_module_logger
 from pyanaconda.core.i18n import _
-from pyanaconda.modules.common.structures.storage import DeviceData
-from pyanaconda.ui.lib.storage import reset_storage
+from pyanaconda.core.signal import Signal
+from pyanaconda.flags import flags
 from pyanaconda.modules.common.constants.objects import DASD, DEVICE_TREE
 from pyanaconda.modules.common.constants.services import STORAGE
+from pyanaconda.modules.common.structures.storage import DeviceData
 from pyanaconda.modules.common.task import sync_run_task
+from pyanaconda.ui.lib.storage import reset_storage
 
-from pyanaconda.anaconda_loggers import get_module_logger
 log = get_module_logger(__name__)
 
 
-class DasdFormatting(object):
+class DasdFormatting:
     """Class for formatting DASDs."""
 
     def __init__(self):
@@ -68,16 +68,16 @@ class DasdFormatting(object):
         """Returns a string summary of DASDs to format."""
         return "\n".join(map(self.get_dasd_info, self.dasds))
 
-    def get_dasd_info(self, disk_name):
+    def get_dasd_info(self, disk_id):
         """Returns a string with description of a DASD."""
         data = DeviceData.from_structure(
-            self._device_tree.GetDeviceData(disk_name)
+            self._device_tree.GetDeviceData(disk_id)
         )
         return "{} ({})".format(data.path, data.attrs.get("bus-id"))
 
-    def search_disks(self, disk_names):
+    def search_disks(self, disk_ids):
         """Search for a list of disks for DASDs to format."""
-        self._dasds = self._dasd_module.FindFormattable(disk_names)
+        self._dasds = self._dasd_module.FindFormattable(disk_ids)
 
     def should_run(self):
         """Should we run the formatting?"""

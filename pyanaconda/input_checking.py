@@ -20,13 +20,13 @@
 
 import pwquality
 
-from pyanaconda.core.signal import Signal
-from pyanaconda.core.i18n import _
-from pyanaconda.core import constants, regexes
-from pyanaconda.core import users
 from pyanaconda.anaconda_loggers import get_module_logger
+from pyanaconda.core import constants, regexes, users
+from pyanaconda.core.i18n import _
+from pyanaconda.core.kernel import kernel_arguments
+from pyanaconda.core.signal import Signal
 from pyanaconda.modules.common.constants.objects import USER_INTERFACE
-from pyanaconda.modules.common.constants.services import BOSS
+from pyanaconda.modules.common.constants.services import RUNTIME
 from pyanaconda.modules.common.structures.policy import PasswordPolicy
 
 log = get_module_logger(__name__)
@@ -38,7 +38,7 @@ def get_policy(policy_name) -> PasswordPolicy:
     :param policy_name: a name of the policy
     :return: a password policy data
     """
-    proxy = BOSS.get_proxy(USER_INTERFACE)
+    proxy = RUNTIME.get_proxy(USER_INTERFACE)
     policies = PasswordPolicy.from_structure_dict(proxy.PasswordPolicies)
 
     if policy_name in policies:
@@ -47,7 +47,7 @@ def get_policy(policy_name) -> PasswordPolicy:
     return PasswordPolicy.from_defaults(policy_name)
 
 
-class PwqualitySettingsCache(object):
+class PwqualitySettingsCache:
     """Cache for libpwquality settings used for password validation.
 
     Libpwquality settings instantiation is probably not exactly cheap
@@ -74,7 +74,7 @@ class PwqualitySettingsCache(object):
 pwquality_settings_cache = PwqualitySettingsCache()
 
 
-class PasswordCheckRequest(object):
+class PasswordCheckRequest:
     """A wrapper for a password check request.
 
     This in general means the password to be checked as well as its validation criteria
@@ -199,7 +199,7 @@ class PasswordCheckRequest(object):
         self._secret_type = new_type
 
 
-class CheckResult(object):
+class CheckResult:
     """Result of an input check."""
 
     def __init__(self):
@@ -311,7 +311,7 @@ class PasswordValidityCheckResult(CheckResult):
         self.length_ok_changed.emit(value)
 
 
-class InputCheck(object):
+class InputCheck:
     """Input checking base class."""
 
     def __init__(self):
@@ -437,6 +437,25 @@ class PasswordValidityCheck(InputCheck):
         self.result.length_ok = length_ok  # pylint: disable=attribute-defined-outside-init
 
 
+class PasswordFIPSCheck(InputCheck):
+    """Check if the password is valid under FIPS, if applicable."""
+
+    def run(self, check_request):
+        self.result.success = True
+        self.result.error_message = ""
+
+        if not kernel_arguments.is_enabled("fips"):
+            return
+
+        if len(check_request.password) >= constants.FIPS_PASSPHRASE_MIN_LENGTH:
+            return
+
+        self.result.success = False
+        self.result.error_message = _(
+            "In FIPS mode, the passphrase must be at least {} letters long."
+        ).format(constants.FIPS_PASSPHRASE_MIN_LENGTH)
+
+
 class PasswordConfirmationCheck(InputCheck):
     """Check if the password & password confirmation match."""
 
@@ -551,7 +570,7 @@ class FullnameCheck(InputCheck):
             self.result.success = False
 
 
-class InputField(object):
+class InputField:
     """An input field containing data to be checked.
 
     The input field can have an initial value that can be
@@ -582,7 +601,7 @@ class InputField(object):
                 self._initial_change_signal_fired = True
 
 
-class PasswordChecker(object):
+class PasswordChecker:
     """Run multiple password and input checks in a given order and report the results.
 
     All added checks (in insertion order) will be run and results returned as error message

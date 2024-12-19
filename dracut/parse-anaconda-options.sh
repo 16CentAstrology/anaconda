@@ -59,15 +59,6 @@ check_removed_arg() {
     fi
 }
 
-check_removed_no_inst_arg() {
-    local removed_arg="$1" new_arg="$2"
-    check_removed_arg "$removed_arg" "All usage of Anaconda boot arguments without 'inst.' prefix \
-was removed. Please use $new_arg instead."
-}
-
-# ssh
-check_removed_no_inst_arg "sshd" "inst.sshd"
-
 # serial was never supposed to be used for anything!
 check_removed_arg serial "To change the console use 'console=' instead."
 # USB is built-in and can't be disabled anymore. DEAL WITH IT.
@@ -80,21 +71,8 @@ check_removed_arg ethtool
 check_removed_arg askmethod "Use an appropriate 'inst.repo=' argument instead."
 check_removed_arg asknetwork "Use an appropriate 'ip=' argument instead."
 
-# lang & keymap
-check_removed_no_inst_arg "lang" "inst.lang"
-check_removed_no_inst_arg "keymap" "inst.keymap"
-
 # repo
-check_depr_arg "method=" "repo=%s"
-check_removed_no_inst_arg "repo" "inst.repo"
-
-# stage2
-check_removed_no_inst_arg "stage2" "inst.stage2"
-
-# kickstart
-check_removed_no_inst_arg "ks" "inst.ks"
-check_removed_no_inst_arg "kssendmac" "inst.ks.sendmac"
-check_removed_no_inst_arg "kssendsn" "inst.ks.sendsn"
+check_removed_arg "inst.method" "Use an appropriate 'inst.repo=' argument instead."
 
 # mpath
 check_removed_arg "inst.nompath"
@@ -104,14 +82,17 @@ check_removed_arg "inst.dmraid"
 check_removed_arg "inst.nodmraid"
 
 # Ignore self-signed SSL certs
-check_removed_no_inst_arg "noverifyssl" "inst.noverifyssl"
 if getargbool 0 inst.noverifyssl; then
     # Tell dracut to use curl --insecure
     echo "rd.noverifyssl" >> /etc/cmdline.d/75-anaconda-options.conf
 fi
 
+# add proxy= to the dracut so stage1 downloads (stage2,kickstart...) don't ignore inst.proxy
+if proxy=$(getarg inst.proxy); then
+    echo "proxy=$proxy" >> /etc/cmdline.d/75-anaconda-options.conf
+fi
+
 # updates
-check_removed_no_inst_arg "updates" "inst.updates"
 if updates=$(getarg inst.updates); then
     if [ -n "$updates" ]; then
         export anac_updates=$updates
@@ -125,12 +106,8 @@ if updates=$(getarg inst.updates); then
     fi
 fi
 
-# for vnc bring network up in initramfs so that cmdline configuration is used
-check_removed_no_inst_arg "vnc" "inst.vnc"
-getargbool 0 inst.vnc && warn "anaconda requiring network for vnc" && set_neednet
-
-# Driver Update Disk
-check_removed_no_inst_arg "dd" "inst.dd"
+# for rdp bring network up in initramfs so that cmdline configuration is used
+getargbool 0 inst.rdp && warn "anaconda requiring network for RDP" && set_neednet
 
 # re-read the commandline args
 unset CMDLINE

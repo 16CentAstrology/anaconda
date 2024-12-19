@@ -16,12 +16,13 @@
 # Red Hat, Inc.
 #
 from blivet.errors import StorageError
-from blivet.formats import get_format
 
 from pyanaconda.anaconda_loggers import get_module_logger
 from pyanaconda.core.i18n import _
-from pyanaconda.modules.storage.partitioning.automatic.noninteractive_partitioning import \
-    NonInteractivePartitioningTask
+from pyanaconda.modules.storage.partitioning.automatic.noninteractive_partitioning import (
+    NonInteractivePartitioningTask,
+)
+from pyanaconda.modules.storage.partitioning.manual.utils import reformat_device
 
 log = get_module_logger(__name__)
 
@@ -58,37 +59,39 @@ class ManualPartitioningTask(NonInteractivePartitioningTask):
         device_spec = mount_data.device_spec
         reformat = mount_data.reformat
         format_type = mount_data.format_type
+        mount_point = mount_data.mount_point
 
-        device = storage.devicetree.resolve_device(device_spec)
+        if not reformat and not mount_point:
+            # XXX empty request, ignore
+            return
+
+        if device_spec:
+            device = storage.devicetree.get_device_by_device_id(device_spec)
+        else:
+            device = storage.devicetree.resolve_device(mount_data.ks_spec)
+            if device:
+                device_spec = device.device_id
+
         if device is None:
             raise StorageError(
                 _("Unknown or invalid device '{}' specified").format(device_spec)
             )
 
         if reformat:
-            if format_type:
-                fmt = get_format(format_type)
+            requested_devices = dict(((req.device_spec, req.mount_point)
+                                      for req in self._requests))
+            device, mount_options = reformat_device(storage,
+                                                    device,
+                                                    format_type,
+                                                    dependencies=requested_devices)
+            if mount_options is not None:
+                mount_data.mount_options = mount_options
 
-                if not fmt:
-                    raise StorageError(
-                        _("Unknown or invalid format '{}' specified for "
-                          "device '{}'").format(format_type, device_spec)
-                    )
-            else:
-                old_fmt = device.format
-
-                if not old_fmt or old_fmt.type is None:
-                    raise StorageError(_("No format on device '{}'").format(device_spec))
-
-                fmt = get_format(old_fmt.type)
-            storage.format_device(device, fmt)
-            # make sure swaps end up in /etc/fstab
-            if fmt.type == "swap":
-                storage.add_fstab_swap(device)
+        # add "mounted" swaps to fstab
+        if device.format.type == "swap" and mount_point == "swap":
+            storage.add_fstab_swap(device)
 
         # only set mount points for mountable formats
-        mount_point = mount_data.mount_point
-
         if device.format.mountable and mount_point and mount_point != "none":
             device.format.mountpoint = mount_point
 

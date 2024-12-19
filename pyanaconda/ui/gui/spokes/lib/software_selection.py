@@ -15,17 +15,18 @@
 # License and may only be used or replicated with the express permission of
 # Red Hat, Inc.
 #
-from pyanaconda.anaconda_loggers import get_module_logger
-from pyanaconda.ui.gui.utils import escape_markup, blockedHandler
-
 import gi
+
+from pyanaconda.anaconda_loggers import get_module_logger
+from pyanaconda.ui.gui.utils import blockedHandler, escape_markup
+
 gi.require_version("Gtk", "3.0")
 gi.require_version("Pango", "1.0")
 from gi.repository import Gtk, Pango
 
 log = get_module_logger(__name__)
 
-__all__ = ["SeparatorRow", "GroupListBoxRow", "EnvironmentListBoxRow"]
+__all__ = ["EnvironmentListBoxRow", "GroupListBoxRow", "SeparatorRow"]
 
 
 class SeparatorRow(Gtk.ListBoxRow):

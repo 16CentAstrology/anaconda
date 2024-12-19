@@ -17,16 +17,14 @@
 # License and may only be used or replicated with the express permission of
 # Red Hat, Inc.
 #
-from pyanaconda.modules.common.task import Task
-from pyanaconda.anaconda_loggers import get_module_logger
+from blivet import blockdev
 
-import gi
-gi.require_version("BlockDev", "2.0")
-from gi.repository import BlockDev as blockdev
+from pyanaconda.anaconda_loggers import get_module_logger
+from pyanaconda.modules.common.task import Task
 
 log = get_module_logger(__name__)
 
-__all__ = ["FindFormattableDASDTask", "DASDFormatTask"]
+__all__ = ["DASDFormatTask", "FindFormattableDASDTask"]
 
 
 class FindFormattableDASDTask(Task):

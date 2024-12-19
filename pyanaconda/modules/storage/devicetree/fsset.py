@@ -19,21 +19,30 @@ import os
 import shutil
 import time
 
-import gi
-gi.require_version("BlockDev", "2.0")
-from gi.repository import BlockDev as blockdev
-
-from blivet.devices import NoDevice, DirectoryDevice, NFSDevice, FileDevice, MDRaidArrayDevice, \
-    NetworkStorageDevice, OpticalDevice
-from blivet.errors import UnrecognizedFSTabEntryError, FSTabTypeMismatchError, SwapSpaceError
-from blivet.formats import get_format, get_device_format_class
+from blivet import blockdev
+from blivet.devices import (
+    DirectoryDevice,
+    FileDevice,
+    MDRaidArrayDevice,
+    NetworkStorageDevice,
+    NFSDevice,
+    NoDevice,
+    OpticalDevice,
+)
+from blivet.errors import (
+    FSTabTypeMismatchError,
+    StorageError,
+    SwapSpaceError,
+    UnrecognizedFSTabEntryError,
+)
+from blivet.formats import get_device_format_class, get_format
 from blivet.storage_log import log_exception_info
 
+from pyanaconda.anaconda_loggers import get_module_logger
 from pyanaconda.core.configuration.anaconda import conf
 from pyanaconda.core.i18n import _
-from pyanaconda.modules.storage.platform import platform, EFI
+from pyanaconda.modules.storage.platform import EFI, platform
 
-from pyanaconda.anaconda_loggers import get_module_logger
 log = get_module_logger(__name__)
 
 __all__ = ["BlkidTab", "CryptTab", "FSSet"]
@@ -76,6 +85,7 @@ def get_containing_device(path, devicetree):
         # have I told you lately that I love you, device-mapper?
         device_name = blockdev.dm.name_from_node(device_name)
 
+    # XXX we get device name from sysfs so usage of get_device_by_name here is correct
     return devicetree.get_device_by_name(device_name)
 
 
@@ -173,7 +183,7 @@ def get_system_filesystems(devicetree):
     return devices
 
 
-class BlkidTab(object):
+class BlkidTab:
     """ Dictionary-like interface to blkid.tab with device path keys """
 
     def __init__(self, chroot=""):
@@ -215,7 +225,7 @@ class BlkidTab(object):
         return self.devices.get(key, default)
 
 
-class CryptTab(object):
+class CryptTab:
     """ Dictionary-like interface to crypttab entries with map name keys """
 
     def __init__(self, devicetree, blkid_tab=None, chroot=""):
@@ -301,7 +311,7 @@ class CryptTab(object):
         return self.mappings.get(key, default)
 
 
-class FSSet(object):
+class FSSet:
     """A class to represent a set of filesystems."""
 
     def __init__(self, devicetree):
@@ -530,7 +540,8 @@ class FSSet(object):
                 try:
                     device.setup()
                     device.format.setup()
-                except (SwapSpaceError, blockdev.SwapActivateError) as e:
+                except (SwapSpaceError, blockdev.SwapActivateError,
+                        StorageError, blockdev.BlockDevError) as e:
                     log.error("Failed to activate swap on '%s': %s", device.name, str(e))
                     break
                 else:

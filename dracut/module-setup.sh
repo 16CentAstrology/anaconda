@@ -22,6 +22,8 @@ installkernel() {
 }
 
 install() {
+    # binaries for easier debugging (requested by https://issues.redhat.com/browse/RHEL-5719)
+    dracut_install ping
     # binaries we want in initramfs
     dracut_install eject -o pigz
     dracut_install depmod blkid
@@ -46,7 +48,6 @@ install() {
     inst "$moddir/anaconda-diskroot" "/sbin/anaconda-diskroot"
     inst_hook pre-pivot 50 "$moddir/anaconda-copy-ks.sh"
     inst_hook pre-pivot 50 "$moddir/anaconda-copy-cmdline.sh"
-    inst_hook pre-pivot 50 "$moddir/anaconda-copy-s390ccwconf.sh"
     inst_hook pre-pivot 90 "$moddir/anaconda-copy-dhclient.sh"
     inst_hook pre-pivot 91 "$moddir/anaconda-copy-prefixdevname.sh"
     inst_hook pre-pivot 95 "$moddir/anaconda-set-kernel-hung-timeout.sh"

@@ -15,8 +15,8 @@
 # License and may only be used or replicated with the express permission of
 # Red Hat, Inc.
 #
-import dnf.transaction
 import dnf.callback
+import dnf.transaction
 
 from pyanaconda.anaconda_loggers import get_module_logger
 from pyanaconda.core.i18n import _
@@ -24,15 +24,13 @@ from pyanaconda.modules.common.errors.installation import PayloadInstallationErr
 
 log = get_module_logger(__name__)
 
-__all__ = ["process_transaction_progress", "TransactionProgress"]
+__all__ = ["TransactionProgress", "process_transaction_progress"]
 
 
 def process_transaction_progress(queue, callback):
     """Process the transaction progress.
 
-    When the installation works correctly it will get 'install'
-    updates followed by a 'done' message and then a 'quit' message.
-    If the installation fails it will send 'quit' without 'done'.
+    When the installation works correctly it will end by 'quit' token.
 
     :param queue: a process shared queue
     :param callback: a callback for progress reporting
@@ -45,17 +43,15 @@ def process_transaction_progress(queue, callback):
             callback(_("Installing {}").format(msg))
         elif token == 'configure':
             callback(_("Configuring {}").format(msg))
-        elif token == 'verify':
-            callback(_("Verifying {}").format(msg))
         elif token == 'log':
             log.info(msg)
         elif token == 'post':
             callback(_("Performing post-installation setup tasks"))
-        elif token == 'done':
-            break  # Installation finished successfully
         elif token == 'quit':
-            raise RuntimeError("The transaction process has ended abruptly: " + msg)
+            log.info(msg)
+            break  # Installation finished successfully
         elif token == 'error':
+            log.error(msg)
             raise PayloadInstallationError("An error occurred during the transaction: " + msg)
 
         (token, msg) = queue.get()
@@ -75,13 +71,13 @@ class TransactionProgress(dnf.callback.TransactionProgress):
         self._postinst_phase = False
         self.cnt = 0
 
-    def progress(self, package, action, ti_done, ti_total, ts_done, ts_total):
+    def progress(self, package, action, ti_done, _ti_total, ts_done, ts_total):
         """Report ongoing progress on the given transaction item.
 
         :param package: the DNF package object
         :param action: the ID of the current action
         :param ti_done: the number of processed bytes of the transaction item
-        :param ti_total: the total number of bytes of the transaction item
+        :param _ti_total: the total number of bytes of the transaction item
         :param ts_done: the number of actions processed in the whole transaction
         :param ts_total: the total number of actions in the whole transaction
         """
@@ -121,19 +117,6 @@ class TransactionProgress(dnf.callback.TransactionProgress):
             if self._postinst_phase:
                 msg = '%s.%s' % (package.name, package.arch)
                 self._queue.put(('configure', msg))
-
-        elif action == dnf.transaction.PKG_VERIFY:
-            msg = '%s.%s (%d/%d)' % (package.name, package.arch, ts_done, ts_total)
-            self._queue.put(('verify', msg))
-
-            # Log the exact package nevra, build time and checksum
-            nevra = "%s-%s.%s" % (package.name, package.evr, package.arch)
-            log_msg = "Verifying: %s %s %s" % (nevra, package.buildtime, package.returnIdSum()[1])
-            self._queue.put(('log', log_msg))
-
-            # Once the last package is verified the transaction is over
-            if ts_done == ts_total:
-                self._queue.put(('done', None))
 
     def error(self, message):
         """Report an error that occurred during the transaction.

@@ -18,23 +18,32 @@
 import os
 import re
 
+from pyanaconda.anaconda_loggers import get_module_logger
+from pyanaconda.core import util
+from pyanaconda.core.configuration.anaconda import conf
+from pyanaconda.core.i18n import _
+from pyanaconda.core.kernel import kernel_arguments
+from pyanaconda.core.path import join_paths
+from pyanaconda.core.product import get_product_name
 from pyanaconda.modules.storage.bootloader.base import BootLoaderError
 from pyanaconda.modules.storage.bootloader.grub2 import GRUB2
 from pyanaconda.modules.storage.bootloader.systemd import SystemdBoot
-from pyanaconda.core import util
-from pyanaconda.core.i18n import _
-from pyanaconda.core.configuration.anaconda import conf
-from pyanaconda.core.kernel import kernel_arguments
-from pyanaconda.core.path import join_paths
-from pyanaconda.product import productName
 
-from pyanaconda.anaconda_loggers import get_module_logger
 log = get_module_logger(__name__)
 
-__all__ = ["EFIBase", "EFIGRUB", "Aarch64EFIGRUB", "ArmEFIGRUB", "MacEFIGRUB", "Aarch64EFISystemdBoot", "X64EFISystemdBoot"]
+__all__ = [
+    "EFIGRUB",
+    "RISCV64EFIGRUB",
+    "Aarch64EFIGRUB",
+    "Aarch64EFISystemdBoot",
+    "ArmEFIGRUB",
+    "EFIBase",
+    "EFISystemdBoot",
+    "X64EFISystemdBoot"
+]
 
 
-class EFIBase(object):
+class EFIBase:
     """A base class for EFI-based boot loaders."""
 
     @property
@@ -85,7 +94,7 @@ class EFIBase(object):
         create_method = "-C" if self.keep_boot_order else "-c" # pylint: disable=no-member
 
         rc = self.efibootmgr(
-            create_method, "-w", "-L", productName.split("-")[0],  # pylint: disable=no-member
+            create_method, "-w", "-L", get_product_name().split("-")[0],  # pylint: disable=no-member
             "-d", boot_disk.path, "-p", boot_part_num,
             "-l", self.efi_dir_as_efifs_dir + self._efi_binary,  # pylint: disable=no-member
             root=conf.target.system_root
@@ -111,7 +120,7 @@ class EFIBase(object):
             except ValueError:
                 continue
 
-            if _product == productName.split("-")[0]:           # pylint: disable=no-member
+            if _product == get_product_name().split("-")[0]:           # pylint: disable=no-member
                 slot_id = slot[4:8]
                 # slot_id is hex, we can't use .isint and use this regex:
                 if not re.match("^[0-9a-fA-F]+$", slot_id):
@@ -225,6 +234,11 @@ class EFISystemdBoot(EFIBase, SystemdBoot):
         """ Full path to EFI configuration file. """
         return join_paths(self.efi_config_dir, self._config_file)
 
+    def check(self):
+        """Verify the bootloader configuration."""
+        # Force the resolution order to run the systemd-boot check.
+        return SystemdBoot.check(self) and EFIBase.check(self)
+
     def write_config(self):
         """ Write the config settings to config file (ex: grub.cfg) not needed for systemd. """
         config_path = join_paths(conf.target.system_root, self.efi_config_file)
@@ -279,31 +293,10 @@ class ArmEFIGRUB(EFIGRUB):
         self._is_32bit_firmware = True
 
 
-class MacEFIGRUB(EFIGRUB):
+class RISCV64EFIGRUB(EFIGRUB):
+    _serial_consoles = ["ttyS"]
+    _efi_binary = "\\grubriscv64.efi"
+
     def __init__(self):
         super().__init__()
-        self._packages64.extend(["grub2-tools-efi", "mactel-boot"])
-
-    def mactel_config(self):
-        if os.path.exists(conf.target.system_root + "/usr/libexec/mactel-boot-setup"):
-            rc = util.execWithRedirect("/usr/libexec/mactel-boot-setup", [],
-                                       root=conf.target.system_root)
-            if rc:
-                log.error("failed to configure Mac boot loader")
-
-    def install(self, args=None):
-        super().install()
-        self.mactel_config()
-
-    def is_valid_stage1_device(self, device, early=False):
-        valid = super().is_valid_stage1_device(device, early)
-
-        # Make sure we don't pick the OSX root partition
-        if valid and getattr(device.format, "name", "") != "Linux HFS+ ESP":
-            valid = False
-
-        if hasattr(device.format, "name"):
-            log.debug("device.format.name is '%s'", device.format.name)
-
-        log.debug("MacEFIGRUB.is_valid_stage1_device(%s) returning %s", device.name, valid)
-        return valid
+        self._packages64 = ["grub2-efi-riscv64"]

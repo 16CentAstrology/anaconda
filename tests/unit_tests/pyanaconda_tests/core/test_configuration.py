@@ -20,24 +20,40 @@
 import os
 import tempfile
 import unittest
-import pytest
 from textwrap import dedent
 from unittest.mock import patch
 
+import pytest
 from blivet.size import Size
 from dasbus.namespace import get_dbus_name
 
-from pyanaconda.core.configuration.anaconda import AnacondaConfiguration, \
-    _convert_geoloc_provider_id_to_url
-from pyanaconda.core.configuration.base import create_parser, read_config, write_config, \
-    get_option, set_option, ConfigurationError, ConfigurationDataError, ConfigurationFileError, \
-    Configuration
+from pyanaconda.core.configuration.anaconda import (
+    AnacondaConfiguration,
+    _convert_geoloc_provider_id_to_url,
+)
+from pyanaconda.core.configuration.base import (
+    Configuration,
+    ConfigurationDataError,
+    ConfigurationError,
+    ConfigurationFileError,
+    create_parser,
+    get_option,
+    read_config,
+    set_option,
+    write_config,
+)
+from pyanaconda.core.configuration.payload import PayloadSection
 from pyanaconda.core.configuration.storage import StorageSection
 from pyanaconda.core.configuration.ui import UserInterfaceSection
-from pyanaconda.modules.common.constants import services, namespaces
-from pyanaconda.core.constants import SOURCE_TYPE_CLOSEST_MIRROR, GEOLOC_DEFAULT_PROVIDER, \
-    GEOLOC_PROVIDER_FEDORA_GEOIP, GEOLOC_PROVIDER_HOSTIP, GEOLOC_URL_FEDORA_GEOIP, \
-    GEOLOC_URL_HOSTIP
+from pyanaconda.core.constants import (
+    GEOLOC_DEFAULT_PROVIDER,
+    GEOLOC_PROVIDER_FEDORA_GEOIP,
+    GEOLOC_PROVIDER_HOSTIP,
+    GEOLOC_URL_FEDORA_GEOIP,
+    GEOLOC_URL_HOSTIP,
+    SOURCE_TYPE_CLOSEST_MIRROR,
+)
+from pyanaconda.modules.common.constants import namespaces, services
 
 # Path to the configuration directory of the repo.
 CONFIG_DIR = os.environ.get("ANACONDA_DATA")
@@ -114,7 +130,7 @@ class ConfigurationTestCase(unittest.TestCase):
 
         assert get_option(parser, "Main", "string", str) == "Hello"
         assert get_option(parser, "Main", "integer", int) == 1
-        assert get_option(parser, "Main", "boolean", bool) == False
+        assert get_option(parser, "Main", "boolean", bool) is False
 
     def test_invalid_get(self):
         parser = create_parser()
@@ -155,7 +171,7 @@ class ConfigurationTestCase(unittest.TestCase):
 
         assert get_option(parser, "Main", "string", str) == "Hi"
         assert get_option(parser, "Main", "integer", int) == 2
-        assert get_option(parser, "Main", "boolean", bool) == True
+        assert get_option(parser, "Main", "boolean", bool) is True
 
     def test_invalid_set(self):
         parser = create_parser()
@@ -384,110 +400,11 @@ class AnacondaConfigurationTestCase(unittest.TestCase):
         for pattern in conf.anaconda.activatable_modules:
             self._check_pattern(pattern)
 
-    def test_kickstart_modules(self):
-        """Test the kickstart_modules option."""
-        message = \
-            "The kickstart_modules configuration option is " \
-            "deprecated and will be removed in in the future."
-
-        conf = AnacondaConfiguration.from_defaults()
-        assert conf.anaconda.activatable_modules == [
-            "org.fedoraproject.Anaconda.Modules.*",
-            "org.fedoraproject.Anaconda.Addons.*"
-
-        ]
-
-        parser = conf.get_parser()
-        parser.read_string(dedent("""
-
-        [Anaconda]
-        kickstart_modules =
-            org.fedoraproject.Anaconda.Modules.Timezone
-            org.fedoraproject.Anaconda.Modules.Localization
-            org.fedoraproject.Anaconda.Modules.Security
-
-        """))
-
-        with pytest.warns(DeprecationWarning, match=message):
-            activatable_modules = conf.anaconda.activatable_modules
-
-        assert activatable_modules == [
-            "org.fedoraproject.Anaconda.Modules.Timezone",
-            "org.fedoraproject.Anaconda.Modules.Localization",
-            "org.fedoraproject.Anaconda.Modules.Security",
-            "org.fedoraproject.Anaconda.Addons.*"
-        ]
-
-        for pattern in activatable_modules:
-            self._check_pattern(pattern)
-
     def test_forbidden_modules(self):
         """Test the forbidden_modules option."""
         conf = AnacondaConfiguration.from_defaults()
 
         for pattern in conf.anaconda.forbidden_modules:
-            self._check_pattern(pattern)
-
-    def test_addons_enabled_modules(self):
-        """Test the addons_enabled option."""
-        message = \
-            "The addons_enabled configuration option is " \
-            "deprecated and will be removed in in the future."
-
-        conf = AnacondaConfiguration.from_defaults()
-        assert conf.anaconda.forbidden_modules == []
-
-        parser = conf.get_parser()
-        parser.read_string(dedent("""
-
-        [Anaconda]
-        forbidden_modules =
-            org.fedoraproject.Anaconda.Modules.Timezone
-            org.fedoraproject.Anaconda.Modules.Localization
-            org.fedoraproject.Anaconda.Modules.Security
-
-        """))
-
-        assert conf.anaconda.forbidden_modules == [
-            "org.fedoraproject.Anaconda.Modules.Timezone",
-            "org.fedoraproject.Anaconda.Modules.Localization",
-            "org.fedoraproject.Anaconda.Modules.Security",
-        ]
-
-        parser.read_string(dedent("""
-
-        [Anaconda]
-        addons_enabled = True
-
-        """))
-
-        with pytest.warns(DeprecationWarning, match=message):
-            forbidden_modules = conf.anaconda.forbidden_modules
-
-        assert forbidden_modules == [
-            "org.fedoraproject.Anaconda.Modules.Timezone",
-            "org.fedoraproject.Anaconda.Modules.Localization",
-            "org.fedoraproject.Anaconda.Modules.Security",
-        ]
-
-        parser.read_string(dedent("""
-
-        [Anaconda]
-        addons_enabled = False
-
-        """))
-
-        with pytest.warns(DeprecationWarning, match=message):
-            forbidden_modules = conf.anaconda.forbidden_modules
-
-        assert forbidden_modules == [
-            "org.fedoraproject.Anaconda.Addons.*",
-            "org.fedoraproject.Anaconda.Modules.Timezone",
-            "org.fedoraproject.Anaconda.Modules.Localization",
-            "org.fedoraproject.Anaconda.Modules.Security",
-        ]
-
-        for pattern in forbidden_modules:
             self._check_pattern(pattern)
 
     def test_optional_modules(self):
@@ -560,6 +477,29 @@ class AnacondaConfigurationTestCase(unittest.TestCase):
     def test_default_installation_source(self):
         conf = AnacondaConfiguration.from_defaults()
         assert conf.payload.default_source == SOURCE_TYPE_CLOSEST_MIRROR
+
+    def test_default_flatpak_remote(self):
+        conf = AnacondaConfiguration.from_defaults()
+        assert conf.payload.flatpak_remote == ('fedora', 'oci+https://registry.fedoraproject.org')
+
+    def test_covert_flatpak_remote(self):
+        convert = PayloadSection._convert_flatpak_remote
+
+        assert convert("test_remote URL") == ("test_remote", "URL")
+
+        # only a pair of two values is supported
+        # test three values raising an error
+        with pytest.raises(ValueError):
+            convert("test remote URL")
+
+        # test one value is raising an error
+        with pytest.raises(ValueError):
+            convert("URL")
+
+        # test that multiple lines are not supported
+        with pytest.raises(ValueError):
+            convert("""test remote
+            test URL""")
 
     def test_default_password_policies(self):
         conf = AnacondaConfiguration.from_defaults()

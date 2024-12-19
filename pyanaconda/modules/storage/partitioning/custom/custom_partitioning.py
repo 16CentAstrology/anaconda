@@ -16,8 +16,12 @@
 # Red Hat, Inc.
 #
 import blivet
-from blivet.deviceaction import ActionResizeFormat, ActionResizeDevice, ActionCreateFormat
-from blivet.devicelibs.lvm import LVM_PE_SIZE, KNOWN_THPOOL_PROFILES
+from blivet.deviceaction import (
+    ActionCreateFormat,
+    ActionResizeDevice,
+    ActionResizeFormat,
+)
+from blivet.devicelibs.lvm import KNOWN_THPOOL_PROFILES, LVM_PE_SIZE
 from blivet.devices import LUKSDevice, LVMVolumeGroupDevice
 from blivet.devices.lvm import LVMCacheRequest
 from blivet.errors import StorageError
@@ -31,12 +35,17 @@ from pykickstart.constants import AUTOPART_TYPE_PLAIN
 
 from pyanaconda.anaconda_loggers import get_module_logger
 from pyanaconda.core.i18n import _
-from pyanaconda.modules.storage.partitioning.automatic.noninteractive_partitioning import \
-    NonInteractivePartitioningTask
-from pyanaconda.modules.storage.partitioning.automatic.utils import get_candidate_disks, \
-    schedule_partitions, get_pbkdf_args, lookup_alias
-from pyanaconda.modules.storage.platform import platform
 from pyanaconda.core.storage import suggest_swap_size
+from pyanaconda.modules.storage.partitioning.automatic.noninteractive_partitioning import (
+    NonInteractivePartitioningTask,
+)
+from pyanaconda.modules.storage.partitioning.automatic.utils import (
+    get_candidate_disks,
+    get_pbkdf_args,
+    lookup_alias,
+    schedule_partitions,
+)
+from pyanaconda.modules.storage.platform import platform
 
 log = get_module_logger(__name__)
 
@@ -229,11 +238,8 @@ class CustomPartitioningTask(NonInteractivePartitioningTask):
             if partition_data.onPart:
                 data.onPart[kwargs["name"]] = partition_data.onPart
         elif partition_data.mountpoint == "/boot/efi":
-            if blivet.arch.is_mactel():
-                ty = "macefi"
-            else:
-                ty = "EFI System Partition"
-                partition_data.fsopts = "defaults,uid=0,gid=0,umask=077,shortname=winnt"
+            ty = "EFI System Partition"
+            partition_data.fsopts = "defaults,uid=0,gid=0,umask=077,shortname=winnt"
         else:
             if partition_data.fstype != "":
                 ty = partition_data.fstype
@@ -413,7 +419,8 @@ class CustomPartitioningTask(NonInteractivePartitioningTask):
                     escrow_cert=cert,
                     add_backup_passphrase=partition_data.backuppassphrase,
                     luks_version=partition_data.luks_version,
-                    pbkdf_args=pbkdf_args
+                    pbkdf_args=pbkdf_args,
+                    opal_admin_passphrase=partition_data.hw_passphrase,
                 )
                 luksdev = LUKSDevice(
                     "luks%d" % storage.next_id,
@@ -429,7 +436,8 @@ class CustomPartitioningTask(NonInteractivePartitioningTask):
                     escrow_cert=cert,
                     add_backup_passphrase=partition_data.backuppassphrase,
                     luks_version=partition_data.luks_version,
-                    pbkdf_args=pbkdf_args
+                    pbkdf_args=pbkdf_args,
+                    opal_admin_passphrase=partition_data.hw_passphrase,
                 )
                 luksdev = LUKSDevice("luks%d" % storage.next_id,
                                      fmt=luksformat,

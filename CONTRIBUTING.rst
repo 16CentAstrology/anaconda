@@ -6,24 +6,44 @@ help with implementing changes in Anaconda, please follow our
 `blog series <https://rhinstaller.wordpress.com/2019/10/11/anaconda-debugging-and-testing-part-1/>`_ or
 an `addon guide <http://rhinstaller.github.io/anaconda-addon-development-guide/index.html>`_ to create Anaconda addon.
 
-How to run make commands
-------------------------
+Setting up development container
+--------------------------------
 
-Anaconda has plenty of dependencies and because of that it's hard to set an environment
-for Anaconda properly. To get all the dependencies, you are free to use a helper script
-in the Anaconda repository.
+The anaconda team uses a containerized development environment using toolbx.
+If you can install `toolbx <https://containertoolbx.org/>`_ or
+`distrobox <https://distrobox.privatedns.org/>`_ on your system, it is highly
+recommended to do that:
 
-Follow these steps to keep your machine clean from all the Anaconda dependencies. It will
-create a container where you can install all the dependencies. If you are not interested in
-dealing with containers, just skip this part and continue on the next one::
+ - It is known to work and gives you reproducible results.
+ - It avoids having to install development packages on your main machine.
+
+If you are not interested in dealing with containers, just skip this part and continue on the next one::
 
     sudo dnf install toolbox
+
+To create and enter a development toolbx for Anaconda just run these commands::
+
     toolbox create
     toolbox enter
 
-To prepare the environment in the container or on your system just run these commands::
+Installing dependencies
+-----------------------
+
+If you are using `cockpit/tasks container <https://quay.io/repository/cockpit/tasks>`_
+for Web UI development only, you can skip this part.
+
+To get all the dependencies and prepare the environment in the container or
+on your system just run these commands::
 
     sudo ./scripts/testing/install_dependencies.sh
+
+
+How to run make commands
+------------------------
+
+Anaconda uses autotools so there are familiar `./configure` script and  Makefile targets.
+To prepare Anaconda sources, you need to run these commands::
+
     ./autogen.sh && ./configure
 
 How to Contribute to the Anaconda Installer (the short version)
@@ -78,6 +98,107 @@ category. You can quickly list these by searching the Red Hat bugzilla for bugs 
 
 Patches for bugs without keywords are welcome, too!
 
+Testing Anaconda changes
+------------------------
+
+To test changes in Anaconda you have a few options based on what you need to do.
+
+Backend and TUI development
+^^^^^^^^^^^^^^^^^^^^^^^^^^^
+There are two options to develop and test changes which are not yet released.
+
+To find out more information about quick way to propagate your changes into the existing installation ISO image see `this blogpost <https://rhinstaller.wordpress.com/2019/10/11/anaconda-debugging-and-testing-part-1/>`_.
+
+Another way is to build the boot.iso directly (takes more time but it's easier to do). See the next section to find out how to build the ISO.
+
+Building installation images
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Building the ISO is the most precise way to find the behavior of Anaconda in the installation environment. However, it needs a lot of HW resources and time to build.
+During the build, you will be ask for ``sudo`` password. Unfortunately, it is required to run the build as root because the build process needs to work with ``/dev/loop`` devices.
+Please do not use `toolbx <https://github.com/containers/toolbox>`_ or `distrobox <https://github.com/89luca89/distrobox>`_ because the commands below are calling podman under root which is hard to achieve from inside of other container.
+
+Follow these steps to build the ISO you need.
+
+**First build Anaconda RPM files with our container**::
+
+  make -f ./Makefile.am container-rpms-scratch
+
+Then build an image containing those RPMs.
+
+**NOTE: Do not run this in the Anaconda toolbox - it will not work due to the need for root privileges.**
+
+To build a regular boot.iso from these RPMs use (loop device mounting requires root privileges)::
+
+  make -f ./Makefile.am anaconda-iso-creator-build # to build the container if it doesn't exists already
+  make -f ./Makefile.am container-iso-build
+
+To build a Web UI boot.iso run::
+
+  make -f ./Makefile.am anaconda-iso-creator-build # to build the container if it doesn't exists already
+  make -f ./Makefile.am container-webui-iso-build
+
+To build a Web UI in Live image run::
+
+  make -f ./Makefile.am anaconda-live-iso-creator-build # to build the container if it doesn't exists already
+  make -f ./Makefile.am container-live-iso-build
+
+The resulting ISO will be stored in ``./result/iso`` directory.
+
+Note: You can put additional RPMs to ``./result/build/01-rpm-build`` and these will be automatically used for the ISO build.
+
+Local development workflow
+^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+This workflow makes it possible to test changes to the Anaconda source code locally on your machine without any dependencies
+on external infrastructure. It uses two scripts, one called ``scripts/testing/rebuild_iso`` to build a fresh bootable installation image
+from Anaconda source code on the given branch and corresponding Fedora/CentOS Stream packages. The second script, called ``scripts/testing/update_iso``
+uses the Anaconda updates image mechanism together with the ``mkksiso`` command provided by the Lorax project to very quickly
+create an updated version of the boot.iso when Anaconda code is changed. The updated boot.iso can then be booted on a VM or bare metal.
+
+The ``rebuild_iso`` script
+"""""""""""""""""""""""""""""""
+
+This is just a simple script that rebuilds the boot.iso from Anaconda source code on the current branch & corresponding Fedora
+(on Fedora branches) or CentoOS Stream (on RHEL branches) packages. The script makes sure to remove the old images first
+and also records Anaconda Git revision that was used to build the image.
+
+This should take about 15 minutes on modern hardware.
+
+See --help for further information.
+
+The ``update_iso`` script
+""""""""""""""""""""""""""""""
+
+This is the main script that enables local development by quickly updating a boot iso with local changes.
+This should take a couple seconds on modern hardware.
+
+For the most common use case ("I have changed the Anaconda source and want to see what it does.") just do this:
+
+1. run ``scripts/testing/rebuild_iso`` first, this creates ``result/iso/boot.iso``
+2. change the Anaconda source code
+3. run ``scripts/testing/update_iso`` which creates the ``result/iso/updated_boot.iso``
+4. start the ``result/iso/updated_boot.iso`` in a VM or on bare metal
+
+The script also has a few command line options that might come handy:
+
+* ``-b, --boot-options`` makes it possible to add additional boot options to the boot.iso boot menu
+* ``-k, --ks-file`` add the specified kickstart file to the updated boot.iso and use it for installation
+* ``-v, --virt-install`` boot the updated iso in a temporary VM for super fast & simple debugging
+* ``-t, --tag`` use a specific Git revision when generating the updates image
+* You can specify custom ISO image (requirement for Live ISO usage) as optional positional parameter.
+
+Running the updated boot.iso
+""""""""""""""""""""""""""""
+
+The ``updated_boot.iso`` is just a regular bootable image, but there are a couple things to note:
+
+* Due to how ``mkksiso`` works the image will fail the image checksum test - so always use the first option
+  in the image boot menu that skips the checksum verification.
+* Make sure to shut down VMs before booting them again after re-generating the ``updated_boot.iso`` file.
+  Otherwise the VM software might continue using the previous file version & your changes might not be visible.
+  There is also a dummy boot options added to ``updated_boot.iso`` called ``build_time`` that records when the
+  currently running image has been updated. You can check this boot option either in the image boot menu
+  or by checking ``/proc/cmdline`` on a running system.
 
 Anaconda Installer Branching Policy (the long version)
 -------------------------------------------------------
@@ -147,15 +268,20 @@ The first line should be a succinct description of what the commit does, startin
 Commits for RHEL Branches
 ^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-If you are submitting a patch for any rhel-branch, the last line of your commit must identify the bugzilla bug id it fixes, using the ``Resolves`` or ``Related`` keyword, e.g.:
-``Resolves: rhbz#111111``
+If you are submitting a patch for any rhel-branch, the last line of your commit must identify the `JIRA issue <https://issues.redhat.com/projects/RHEL/issues/>`_ id it fixes, using the ``Resolves``, ``Related`` or ``Reverts`` keyword, e.g.:
+``Resolves: RHEL-11111``
 
 or
 
-``Related: rhbz#1234567``
+``Related: RHEL-12345``
+
+or
+
+``Reverts: RHEL-22222``
 
 Use ``Resolves`` if the patch fixes the core issue which caused the bug.
 Use ``Related`` if the patch fixes an ancillary issue that is related to, but might not actually fix the bug.
+Use ``Reverts`` if this patch reverts changes introduced by linked bug.
 
 Release Notes
 ^^^^^^^^^^^^^
@@ -164,14 +290,9 @@ If you are submitting a patch that should be documented in the release notes, cr
 ``docs/release-notes/template.rst`` file, modify its content and add the new file to your patch, so
 it can be reviewed and merged together with your changes.
 
-The template has the following content:
-
-.. include:: ./docs/release-notes/template.rst
-    :literal:
-
 After a final release (for example, Fedora GA), we will remove all release notes from
-``docs/release-notes/`` of the release branch and create a new file in ``docs/releases/``
-with their content.
+``docs/release-notes/`` of the release branch and add the content into the ``docs/release-notes.rst``
+file.
 
 This change will be ported to upstream to remove the already documented release notes from
 ``docs/release-notes/`` of the upstream branch. In a case of RHEL, port only the new release file.
@@ -188,15 +309,29 @@ Code conventions
 
 It is important to have consistency across the codebase. This won't necessarily make your code work better, but it might help to make the codebase more understandable, easier to work with, and more pleasant to go through when doing a code review.
 
-In general we are trying to be as close as possible to `PEP8 <https://www.python.org/dev/peps/pep-0008/>`_ but also extending or modifying minor PEP8 rules when it seems suitable in the context of our project. See list of the conventions below:
+Automated Linting and Code Checks
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-* Limit all lines to a maximum of 99 characters.
+We use a set of linters (e.g., `ruff`, `pylint`) to automatically enforce code quality and style guidelines. These tools are used to gate changes, so **it is highly recommended that you run the linters locally before submitting a pull request (PR)** to catch any issues early.
+
+You can run the `ruff` checks locally with::
+
+    make TESTS=ruff/run_ruff.sh check
+
+You can run the `pylint` checks locally with::
+
+    make TESTS=pylint/runpylint.py check
+
+Additional Code Conventions
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+In general, we aim to stay as close as possible to `PEP8 <https://www.python.org/dev/peps/pep-0008/>`_, while extending or adjusting minor rules to suit the context of our project. The following conventions supplement the rules enforced by our linters:
+
 * Format strings with `.format() <https://docs.python.org/3/library/stdtypes.html#str.format>`_ instead of ``%`` (https://pyformat.info/)
     * Exception: Use ``%`` formatting in logging functions and pass the ``%`` as arguments. See `logging format interpolation <https://stackoverflow.com/questions/34619790/pylint-message-logging-format-interpolation>`_ for the reasons.
 * Follow docstring conventions. See `PEP257 <https://www.python.org/dev/peps/pep-0257>`_.
 * Use `Enum <https://docs.python.org/3/library/enum.html>`_ instead of constants is recommended.
 * Use ``super()`` instead of ``super(ParentClass, self)``.
-* Use only absolute imports (instead of relative ones).
 * Use ``ParentClass.method(self)`` only in case of multiple inheritance.
 * Instance variables are preferred, class variables should be used only with a good reason.
 * Global instances and singletons should be used only with a good reason.
@@ -234,7 +369,7 @@ Then push the merge to the remote::
 
     git push origin <target branch>
 
-If the pull request has been opened for the ``fedora-38`` branch, then you also need to check if the same change should go to the ``master`` branch in anoter PR.
+If the pull request has been opened for the ``fedora-38`` branch, then you also need to check if the same change should go to the ``master`` branch in another PR.
 
 .. _pure-community-features:
 

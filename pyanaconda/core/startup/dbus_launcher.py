@@ -27,15 +27,20 @@ import os
 import signal
 from subprocess import TimeoutExpired
 
-from pyanaconda.core.configuration.anaconda import conf
-from pyanaconda.core.util import startProgram
-from pyanaconda.core.constants import ANACONDA_BUS_ADDR_FILE, ANACONDA_CONFIG_TMP, \
-    ANACONDA_BUS_CONF_FILE, DBUS_ANACONDA_SESSION_ADDRESS
-from pyanaconda.core.dbus import DBus
 from dasbus.constants import DBUS_FLAG_NONE
-from pyanaconda.modules.common.constants.services import BOSS
 
 from pyanaconda.anaconda_loggers import get_anaconda_root_logger
+from pyanaconda.core.configuration.anaconda import conf
+from pyanaconda.core.constants import (
+    ANACONDA_BUS_ADDR_FILE,
+    ANACONDA_BUS_CONF_FILE,
+    ANACONDA_CONFIG_TMP,
+    DBUS_ANACONDA_SESSION_ADDRESS,
+)
+from pyanaconda.core.dbus import DBus
+from pyanaconda.core.path import open_with_perm
+from pyanaconda.core.util import startProgram
+from pyanaconda.modules.common.constants.services import BOSS
 from pyanaconda.modules.common.task import sync_run_task
 
 log = get_anaconda_root_logger()
@@ -43,7 +48,7 @@ log = get_anaconda_root_logger()
 __all__ = ["AnacondaDBusLauncher"]
 
 
-class AnacondaDBusLauncher(object):
+class AnacondaDBusLauncher:
     """Class for launching the Anaconda DBus modules."""
 
     DBUS_LAUNCH_BIN = "dbus-daemon"
@@ -110,12 +115,12 @@ class AnacondaDBusLauncher(object):
             "--syslog",
             "--config-file={}".format(ANACONDA_BUS_CONF_FILE)
         ]
-        
+
         def dbus_preexec():
             # to set dbus subprocess SIGINT handler
             signal.signal(signal.SIGINT, signal.SIG_IGN)
 
-        self._log_file = open('/tmp/dbus.log', 'a')
+        self._log_file = open_with_perm('/tmp/dbus.log', 'a', 0o600)
         self._dbus_daemon_process = startProgram(command, stderr=self._log_file, reset_lang=False,
                                                  preexec_fn=dbus_preexec)
 

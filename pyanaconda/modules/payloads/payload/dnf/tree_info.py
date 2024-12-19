@@ -16,35 +16,61 @@
 # Red Hat, Inc.
 #
 import configparser
+import copy
 import os
 import time
 from collections import namedtuple
-
 from functools import partial
+
 from productmd.treeinfo import TreeInfo
-from pyanaconda.modules.common.task import Task
-from pyanaconda.modules.payloads.payload.dnf.repositories import generate_treeinfo_repository
 from requests import RequestException
 
 from pyanaconda.anaconda_loggers import get_module_logger
 from pyanaconda.core.configuration.anaconda import conf
-from pyanaconda.core.constants import URL_TYPE_BASEURL, NETWORK_CONNECTION_TIMEOUT, \
-    DEFAULT_REPOS, USER_AGENT
+from pyanaconda.core.constants import (
+    DEFAULT_REPOS,
+    NETWORK_CONNECTION_TIMEOUT,
+    REPO_ORIGIN_TREEINFO,
+    URL_TYPE_BASEURL,
+    USER_AGENT,
+)
 from pyanaconda.core.path import join_paths
-from pyanaconda.core.payload import split_protocol, ProxyString, ProxyStringError
+from pyanaconda.core.payload import ProxyString, ProxyStringError, split_protocol
 from pyanaconda.core.util import requests_session, xprogressive_delay
 from pyanaconda.modules.common.structures.payload import RepoConfigurationData
+from pyanaconda.modules.common.task import Task
 
 log = get_module_logger(__name__)
 
 __all__ = [
-    "TreeInfoMetadataError",
-    "NoTreeInfoError",
     "InvalidTreeInfoError",
-    "TreeInfoMetadata",
     "LoadTreeInfoMetadataResult",
     "LoadTreeInfoMetadataTask",
+    "NoTreeInfoError",
+    "TreeInfoMetadata",
+    "TreeInfoMetadataError",
 ]
+
+
+def generate_treeinfo_repository(repo_data: RepoConfigurationData, repo_md):
+    """Generate repositories from tree metadata of the specified repository.
+
+    :param RepoConfigurationData repo_data: a repository with the .treeinfo file
+    :param TreeInfoRepoMetadata repo_md: a metadata of a treeinfo repository
+    :return RepoConfigurationData: a treeinfo repository
+    """
+    repo = copy.deepcopy(repo_data)
+
+    repo.origin = REPO_ORIGIN_TREEINFO
+    repo.name = repo_md.name
+
+    repo.type = URL_TYPE_BASEURL
+    repo.url = repo_md.url
+
+    repo.enabled = repo_md.enabled
+    repo.installation_enabled = False
+
+    return repo
 
 
 class TreeInfoMetadataError(Exception):
@@ -62,7 +88,7 @@ class InvalidTreeInfoError(TreeInfoMetadataError):
     pass
 
 
-class TreeInfoMetadata(object):
+class TreeInfoMetadata:
     """The representation of a .treeinfo file.
 
     The structure of the installation root can be similar to this:
@@ -98,13 +124,11 @@ class TreeInfoMetadata(object):
 
     def __init__(self):
         """Create a new instance."""
-        self._root_url = ""
         self._release_version = ""
         self._repositories = []
 
     def _reset(self):
         """Reset the metadata."""
-        self._root_url = ""
         self._release_version = ""
         self._repositories = []
 
@@ -193,7 +217,6 @@ class TreeInfoMetadata(object):
             raise InvalidTreeInfoError("Invalid metadata: {}".format(str(e))) from None
 
         # Update this treeinfo representation.
-        self._root_url = root_url
         self._repositories = repo_list
         self._release_version = release_version
 
@@ -256,7 +279,8 @@ class TreeInfoMetadata(object):
                 proxy = ProxyString(proxy_url)
                 proxies = {
                     "http": proxy.url,
-                    "https": proxy.url
+                    "https": proxy.url,
+                    "ftp": proxy.url
                 }
             except ProxyStringError as e:
                 log.debug("Failed to parse the proxy '%s': %s", proxy_url, e)
@@ -363,7 +387,7 @@ class TreeInfoMetadata(object):
         return None
 
 
-class TreeInfoRepoMetadata(object):
+class TreeInfoRepoMetadata:
     """Metadata repo object contains metadata about repository."""
 
     def __init__(self, repo_name, tree_info, root_url):
@@ -375,7 +399,6 @@ class TreeInfoRepoMetadata(object):
         """
         self._name = repo_name
         self._type = tree_info.type
-        self._root_url = root_url
         self._relative_path = tree_info.paths.repository
         self._url = self._get_url(
             root_url=root_url,
@@ -433,6 +456,7 @@ class TreeInfoRepoMetadata(object):
         return protocol + os.path.normpath(absolute_path)
 
 
+# The result of the LoadTreeInfoMetadataTask task.
 LoadTreeInfoMetadataResult = namedtuple(
     "LoadTreeInfoMetadataResult", [
         "repository_data",
@@ -440,9 +464,6 @@ LoadTreeInfoMetadataResult = namedtuple(
         "treeinfo_repositories"
     ]
 )
-LoadTreeInfoMetadataResult.__doc__ += """
-The result of the LoadTreeInfoMetadataTask task.
-"""
 
 
 class LoadTreeInfoMetadataTask(Task):

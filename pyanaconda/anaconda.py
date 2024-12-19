@@ -19,25 +19,31 @@
 
 import os
 import sys
-from tempfile import mkstemp
 import threading
+from tempfile import mkstemp
 
-from pyanaconda.core.constants import DisplayModes, PAYLOAD_TYPE_RPM_OSTREE, ADDON_PATHS, \
-    PAYLOAD_TYPE_LIVE_IMAGE
+from pyanaconda.anaconda_loggers import get_stdout_logger
 from pyanaconda.core import constants
-from pyanaconda.core.startup.dbus_launcher import AnacondaDBusLauncher
+from pyanaconda.core.constants import (
+    ADDON_PATHS,
+    PAYLOAD_TYPE_LIVE_IMAGE,
+    PAYLOAD_TYPE_RPM_OSTREE,
+    DisplayModes,
+)
 from pyanaconda.core.kernel import kernel_arguments
+from pyanaconda.core.path import open_with_perm
+from pyanaconda.core.startup.dbus_launcher import AnacondaDBusLauncher
 from pyanaconda.modules.common.constants.services import PAYLOADS
 from pyanaconda.ui.lib.addons import collect_addon_ui_paths
 
-from pyanaconda.anaconda_loggers import get_stdout_logger
 stdoutLog = get_stdout_logger()
 
 from pyanaconda.anaconda_loggers import get_module_logger
+
 log = get_module_logger(__name__)
 
 
-class Anaconda(object):
+class Anaconda:
     def __init__(self):
         self._display_mode = None
         self._interactive_mode = True
@@ -147,6 +153,11 @@ class Anaconda(object):
         """Report if Anaconda should run with the TUI."""
         return self._display_mode == DisplayModes.TUI
 
+    @property
+    def is_webui_supported(self):
+        "Report if webui package is installed"
+        return os.path.exists("/usr/share/cockpit/anaconda-webui")
+
     def log_display_mode(self):
         if not self.display_mode:
             log.error("Display mode is not set!")
@@ -157,10 +168,11 @@ class Anaconda(object):
                  constants.DISPLAY_MODE_NAME[self.display_mode])
 
     def dumpState(self):
-        from meh import ExceptionInfo
-        from meh.dump import ReverseExceptionDump
         from inspect import stack as _stack
         from traceback import format_stack
+
+        from meh import ExceptionInfo
+        from meh.dump import ReverseExceptionDump
 
         # Skip the frames for dumpState and the signal handler.
         stack = _stack()[2:]
@@ -187,7 +199,7 @@ class Anaconda(object):
         os.close(fd)
 
         # append to a given file
-        with open("/tmp/anaconda-tb-all.log", "a+") as f:
+        with open_with_perm("/tmp/anaconda-tb-all.log", "a+", 0o600) as f:
             f.write("--- traceback: %s ---\n" % filename)
             f.write(dump_text + "\n")
 
@@ -196,13 +208,11 @@ class Anaconda(object):
         """The user interface."""
         return self._intf
 
-    def initInterface(self):
+    def initialize_interface(self):
         if self._intf:
             raise RuntimeError("Second attempt to initialize the InstallInterface")
 
-        # this boot option is meant to be temporary, so just check it directly
-        # from kernel boot command line like this
-        if "webui" in kernel_arguments:
+        if self.gui_mode and self.is_webui_supported:
             from pyanaconda.ui.webui import CockpitUserInterface
             self._intf = CockpitUserInterface(
                 None,

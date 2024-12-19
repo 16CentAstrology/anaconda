@@ -21,20 +21,25 @@ Module facilitating the work with NTP servers and NTP daemon's configuration
 
 """
 
-import re
 import os
-import tempfile
+import re
 import shutil
+import tempfile
 
 from pyanaconda.anaconda_loggers import get_module_logger
 from pyanaconda.core.async_utils import async_action_nowait
+from pyanaconda.core.constants import (
+    NTP_SERVER_NOK,
+    NTP_SERVER_OK,
+    NTP_SERVER_QUERY,
+    NTP_SERVER_TIMEOUT,
+    THREAD_NTP_SERVER_CHECK,
+)
 from pyanaconda.core.i18n import N_, _
-from pyanaconda.core.constants import NTP_SERVER_TIMEOUT, NTP_SERVER_QUERY, \
-    THREAD_NTP_SERVER_CHECK, NTP_SERVER_OK, NTP_SERVER_NOK
 from pyanaconda.core.signal import Signal
+from pyanaconda.core.threads import thread_manager
 from pyanaconda.core.util import execWithRedirect
 from pyanaconda.modules.common.structures.timezone import TimeSourceData
-from pyanaconda.core.threads import thread_manager
 
 NTP_CONFIG_FILE = "/etc/chrony.conf"
 
@@ -141,17 +146,17 @@ def get_servers_from_config(conf_file_path=NTP_CONFIG_FILE):
                 words = match.group(3).lower().split()
                 skip_argument = False
 
-                for i in range(len(words)):
+                for i, word in enumerate(words):
                     if skip_argument:
                         skip_argument = False
                         continue
-                    if words[i] in SRV_NOARG_OPTIONS:
-                        server.options.append(words[i])
-                    elif words[i] in SRV_ARG_OPTIONS and i + 1 < len(words):
+                    if word in SRV_NOARG_OPTIONS:
+                        server.options.append(word)
+                    elif word in SRV_ARG_OPTIONS and i + 1 < len(words):
                         server.options.append(' '.join(words[i:i+2]))
                         skip_argument = True
                     else:
-                        log.debug("Unknown NTP server option %s", words[i])
+                        log.debug("Unknown NTP server option %s", word)
 
                 servers.append(server)
 
@@ -228,7 +233,7 @@ def save_servers_to_config(servers, conf_file_path=NTP_CONFIG_FILE, out_file_pat
             raise NTPconfigError(msg.format(oserr.strerror)) from oserr
 
 
-class NTPServerStatusCache(object):
+class NTPServerStatusCache:
     """The cache of NTP server states."""
 
     def __init__(self):

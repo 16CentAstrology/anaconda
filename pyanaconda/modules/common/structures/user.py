@@ -16,9 +16,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
-from dasbus.structure import DBusData
-
-from dasbus.structure import generate_string_from_data
+from dasbus.structure import DBusData, generate_string_from_data
 from dasbus.typing import *  # pylint: disable=wildcard-import
 
 from pyanaconda.core.constants import ID_MODE_USE_DEFAULT, ID_MODE_USE_VALUE
@@ -33,7 +31,7 @@ class UserData(DBusData):
         self._name = ""
         self._uid = 0
         self._uid_mode = ID_MODE_USE_DEFAULT
-        self._groups = list()
+        self._groups = []
         self._gid = 0
         self._gid_mode = ID_MODE_USE_DEFAULT
         self._homedir = ""
@@ -162,7 +160,7 @@ class UserData(DBusData):
 
     @property
     def gid(self) -> UInt32:
-        """The GID of the user’s primary group.
+        """The GID of the user's primary group.
 
         If ignored due to gid_mode, defaults to the next available non-system GID.
 
@@ -234,7 +232,7 @@ class UserData(DBusData):
 
         To create an encrypted password you can use python:
 
-        python3 -c 'import crypt; print(crypt.crypt("My Password", "$y$j9T$My Sault"))'
+        python3 -c 'import crypt_r; print(crypt_r.crypt("My Password", "$y$j9T$My Sault"))'
 
         This will compute a hash of your password using the yescrypt hasing method and
         your provided salt.
@@ -242,7 +240,7 @@ class UserData(DBusData):
         If the yescrypt method is not supported by your system, you can use the
         sha512crypt hashing method:
 
-        python3 -c 'import crypt; print(crypt.crypt("My Password", "$6$My Sault"))'
+        python3 -c 'import crypt_r; print(crypt_r.crypt("My Password", "$6$My Sault"))'
 
         This will compute a hash of your password using the sha512crypt hasing method
         and your provided salt.
@@ -314,7 +312,7 @@ class UserData(DBusData):
         """Provides the GECOS information for the user.
 
         This is a string of various system-specific fields separated by a comma.
-        It is frequently used to specify the user’s full name, office number, and the like.
+        It is frequently used to specify the user's full name, office number, and the like.
         See man 5 passwd for more details.
 
         For examples: "foo"

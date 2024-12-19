@@ -17,20 +17,21 @@
 # License and may only be used or replicated with the express permission of
 # Red Hat, Inc.
 #
+import gi
+
 from pyanaconda.anaconda_loggers import get_module_logger
-from pyanaconda.core.i18n import _, C_
-from pyanaconda.product import productName, productVersion
+from pyanaconda.core.i18n import C_, _
+from pyanaconda.core.product import get_product_name, get_product_version
 from pyanaconda.core.storage import get_supported_autopart_choices
 from pyanaconda.ui.gui.utils import escape_markup, really_hide, really_show
 
-import gi
 gi.require_version("AnacondaWidgets", "3.4")
 gi.require_version("Gtk", "3.0")
-from gi.repository import Gtk, AnacondaWidgets
+from gi.repository import AnacondaWidgets, Gtk
 
 log = get_module_logger(__name__)
 
-__all__ = ["MountPointSelector", "Accordion", "Page", "UnknownPage", "CreateNewPage"]
+__all__ = ["Accordion", "CreateNewPage", "MountPointSelector", "Page", "UnknownPage"]
 
 DATA_DEVICE = 0
 SYSTEM_DEVICE = 1
@@ -316,6 +317,8 @@ class Accordion(Gtk.Box):
         gi.require_version("Gdk", "3.0")
         from gi.repository import Gdk
 
+        old_selector = self.current_selector
+
         if event:
             if event.type not in [Gdk.EventType.BUTTON_PRESS, Gdk.EventType.KEY_RELEASE,
                                   Gdk.EventType.FOCUS_CHANGE]:
@@ -325,7 +328,6 @@ class Accordion(Gtk.Box):
                event.keyval not in [Gdk.KEY_space, Gdk.KEY_Return, Gdk.KEY_ISO_Enter, Gdk.KEY_KP_Enter, Gdk.KEY_KP_Space]:
                 return
 
-            old_selector = self.current_selector
             # deal with multiselection
             state = event.get_state()
             if state & Gdk.ModifierType.CONTROL_MASK: # holding CTRL
@@ -468,7 +470,8 @@ class CreateNewPage(BasePage):
 
         label = Gtk.Label(label=_("You haven't created any mount points for your "
                             "%(product)s %(version)s installation yet.  "
-                            "You can:") % {"product" : productName, "version" : productVersion},
+                            "You can:") % {"product" : get_product_name(),
+                                           "version" : get_product_version()},
                             wrap=True, xalign=0, yalign=0.5)
         self._createBox.attach(label, 0, 0, 2, 1)
 

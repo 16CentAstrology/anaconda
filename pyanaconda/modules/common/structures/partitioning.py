@@ -22,7 +22,7 @@ from dasbus.typing import *  # pylint: disable=wildcard-import
 
 from pyanaconda.core.configuration.anaconda import conf
 
-__all__ = ["PartitioningRequest", "MountPointRequest"]
+__all__ = ["MountPointRequest", "PartitioningRequest"]
 
 
 class PartitioningRequest(DBusData):
@@ -32,6 +32,9 @@ class PartitioningRequest(DBusData):
         self._partitioning_scheme = conf.storage.default_scheme
         self._file_system_type = ""
         self._excluded_mount_points = []
+        self._reformatted_mount_points = []
+        self._reused_mount_points = []
+        self._removed_mount_points = []
         self._hibernation = False
 
         self._encrypted = False
@@ -46,6 +49,8 @@ class PartitioningRequest(DBusData):
 
         self._escrow_certificate = ""
         self._backup_passphrase_enabled = False
+
+        self._opal_admin_passphrase = ""
 
     @property
     def partitioning_scheme(self) -> Int:
@@ -110,6 +115,56 @@ class PartitioningRequest(DBusData):
     @excluded_mount_points.setter
     def excluded_mount_points(self, mount_points: List[Str]):
         self._excluded_mount_points = mount_points
+
+    @property
+    def reformatted_mount_points(self) -> List[Str]:
+        """Reformatted mount points.
+
+        Reformat and reuse existing devices for the mount points.
+
+        For example: /
+
+        :return: a list of mount points
+        """
+        return self._reformatted_mount_points
+
+    @reformatted_mount_points.setter
+    def reformatted_mount_points(self, mount_points: List[Str]):
+        self._reformatted_mount_points = mount_points
+
+    @property
+    def reused_mount_points(self) -> List[Str]:
+        """Reused mount points.
+
+        Reuse existing devices for the mount points.
+
+        For example: /home
+
+        :return: a list of mount points
+        """
+        return self._reused_mount_points
+
+    @reused_mount_points.setter
+    def reused_mount_points(self, mount_points: List[Str]):
+        self._reused_mount_points = mount_points
+
+    @property
+    def removed_mount_points(self) -> List[Str]:
+        """Removed mount points.
+
+        Destroy the devices for the mount points if they exist.
+
+        Supported only for plain partition mount points
+
+        For example: /boot
+
+        :return: a list of mount points
+        """
+        return self._removed_mount_points
+
+    @removed_mount_points.setter
+    def removed_mount_points(self, mount_points: List[Str]):
+        self._removed_mount_points = mount_points
 
     @property
     def encrypted(self) -> Bool:
@@ -255,12 +310,25 @@ class PartitioningRequest(DBusData):
     def backup_passphrase_enabled(self, enabled: Bool):
         self._backup_passphrase_enabled = enabled
 
+    @property
+    def opal_admin_passphrase(self) -> Str:
+        """OPAL admin passphrase to be used when configuring hardware encryption
+
+        :return: a string with the OPAL admin passphrase
+        """
+        return self._opal_admin_passphrase
+
+    @opal_admin_passphrase.setter
+    def opal_admin_passphrase(self, value: Str):
+        self._opal_admin_passphrase = value
+
     def __repr__(self):
         """Generate a string representation."""
         return generate_string_from_data(
             self,
-            skip=["passphrase"],
-            add={"passphrase_set": bool(self.passphrase)}
+            skip=["passphrase", "opal_admin_passphrase"],
+            add={"passphrase_set": bool(self.passphrase),
+                 "opal_admin_passphrase_set": bool(self.opal_admin_passphrase)}
         )
 
 
@@ -269,6 +337,7 @@ class MountPointRequest(DBusData):
 
     def __init__(self):
         self._device_spec = ""
+        self._ks_spec = ""
         self._mount_point = ""
         self._mount_options = ""
         self._reformat = False
@@ -287,6 +356,19 @@ class MountPointRequest(DBusData):
     def device_spec(self, spec: Str):
         """Set the block device to mount."""
         self._device_spec = spec
+
+    @property
+    def ks_spec(self) -> Str:
+        """Kickstart specification of the block device to mount.
+
+        :return: a device specification
+        """
+        return self._ks_spec
+
+    @ks_spec.setter
+    def ks_spec(self, spec: Str):
+        """Set the kickstart specification of the device to mount."""
+        self._ks_spec = spec
 
     @property
     def mount_point(self) -> Str:

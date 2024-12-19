@@ -1,10 +1,8 @@
----
-
 name: Differential ShellCheck
 on:
   push:
   pull_request:
-    branches: [ master, rhel-* ]
+    branches: [ master, rhel-*, fedora-* ]
 
 permissions:
   contents: read
@@ -19,22 +17,23 @@ jobs:
 
     steps:
       - name: Repository checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
       - id: ShellCheck
         name: Differential ShellCheck
-        uses: redhat-plumbers-in-action/differential-shellcheck@v4
+        uses: redhat-plumbers-in-action/differential-shellcheck@v5
         with:
           severity: warning
           token: ${{ secrets.GITHUB_TOKEN }}
+          exclude-path: |
+            *.j2
+            **/*.j2
 
       - if: ${{ always() }}
         name: Upload artifact with ShellCheck defects in SARIF format
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: Differential ShellCheck SARIF
           path: ${{ steps.ShellCheck.outputs.sarif }}
-
-...

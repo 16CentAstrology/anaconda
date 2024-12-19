@@ -16,22 +16,25 @@
 # License and may only be used or replicated with the express permission of
 # Red Hat, Inc.
 #
-from pyanaconda.core.constants import PASSWORD_POLICY_ROOT
-from pyanaconda.core.i18n import _, CN_
-from pyanaconda.core.users import crypt_password
 from pyanaconda import input_checking
+from pyanaconda.anaconda_loggers import get_module_logger
 from pyanaconda.core import constants
-from pyanaconda.modules.common.util import is_module_available
+from pyanaconda.core.constants import PASSWORD_POLICY_ROOT
+from pyanaconda.core.i18n import CN_, _
+from pyanaconda.core.users import crypt_password
 from pyanaconda.modules.common.constants.services import USERS
-from pyanaconda.ui.gui.spokes import NormalSpoke
+from pyanaconda.modules.common.util import is_module_available
 from pyanaconda.ui.categories.user_settings import UserSettingsCategory
-from pyanaconda.ui.gui.helpers import GUISpokeInputCheckHandler
-from pyanaconda.ui.gui.utils import set_password_visibility
 from pyanaconda.ui.common import FirstbootSpokeMixIn
 from pyanaconda.ui.communication import hubQ
-from pyanaconda.ui.lib.users import can_modify_root_configuration, get_root_configuration_status
+from pyanaconda.ui.gui.helpers import GUISpokeInputCheckHandler
+from pyanaconda.ui.gui.spokes import NormalSpoke
+from pyanaconda.ui.gui.utils import set_password_visibility
+from pyanaconda.ui.lib.users import (
+    can_modify_root_configuration,
+    get_root_configuration_status,
+)
 
-from pyanaconda.anaconda_loggers import get_module_logger
 log = get_module_logger(__name__)
 
 __all__ = ["PasswordSpoke"]
@@ -139,12 +142,6 @@ class PasswordSpoke(FirstbootSpokeMixIn, NormalSpoke, GUISpokeInputCheckHandler)
         self._password_bar.add_offset_value("low", 2)
         self._password_bar.add_offset_value("medium", 3)
         self._password_bar.add_offset_value("high", 4)
-
-        # set visibility of the password entries
-        # - without this the password visibility toggle icon will
-        #   not be shown
-        set_password_visibility(self.password_entry, False)
-        set_password_visibility(self.password_confirmation_entry, False)
 
         # Send ready signal to main event loop
         hubQ.send_ready(self.__class__.__name__)
@@ -313,6 +310,16 @@ class PasswordSpoke(FirstbootSpokeMixIn, NormalSpoke, GUISpokeInputCheckHandler)
     def on_password_icon_clicked(self, entry, icon_pos, event):
         """Called by Gtk callback when the icon of a password entry is clicked."""
         set_password_visibility(entry, not entry.get_visibility())
+
+    def on_password_entry_map(self, entry):
+        """Called when a password entry widget is going to be displayed.
+
+        - Without this the password visibility toggle icon would not be shown.
+        - The password should be hidden every time the entry widget is displayed
+          to avoid showing the password in plain text in case the user previously
+          displayed the password and then left the spoke, for example.
+        """
+        set_password_visibility(entry, False)
 
     def on_back_clicked(self, button):
         # disable root if no password is entered

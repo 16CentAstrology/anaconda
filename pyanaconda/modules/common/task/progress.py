@@ -18,8 +18,8 @@
 from abc import ABC, abstractmethod
 from threading import Lock
 
-from pyanaconda.core.signal import Signal
 from pyanaconda.core.async_utils import async_action_nowait
+from pyanaconda.core.signal import Signal
 
 __all__ = ['ProgressReporter']
 
@@ -30,6 +30,7 @@ class ProgressReporter(ABC):
     def __init__(self):
         super().__init__()
         self._progress_changed_signal = Signal()
+        self._category_changed_signal = Signal()
 
         self.__progress_lock = Lock()
         self.__progress_step = 0
@@ -54,6 +55,19 @@ class ProgressReporter(ABC):
     def progress_changed_signal(self):
         """Signal emits when the progress of the task changes."""
         return self._progress_changed_signal
+
+    @property
+    def category_changed_signal(self):
+        """Signal emits when the category of the task changes."""
+        return self._category_changed_signal
+
+    @async_action_nowait
+    def report_category(self, category):
+        if category is None:
+            return
+        else:
+            self._category_changed_signal.emit(category)
+
 
     @async_action_nowait
     def report_progress(self, message, step_number=None, step_size=None):
@@ -83,11 +97,8 @@ class ProgressReporter(ABC):
             if step_size is not None:
                 step += step_size
 
-            if step < current_step:
-                step = current_step
-
-            if step > max_step:
-                step = max_step
+            step = max(step, current_step)
+            step = min(step, max_step)
 
             self.__progress_step = step
             self.__progress_msg = message

@@ -17,19 +17,29 @@
 #
 import os.path
 import tempfile
-import pytest
 import unittest
+from unittest.mock import Mock, patch
 
-from unittest.mock import patch, Mock
+import pytest
 from dasbus.structure import compare_data
 
-from pyanaconda.core.constants import URL_TYPE_METALINK, NETWORK_CONNECTION_TIMEOUT, \
-    REPO_ORIGIN_TREEINFO
+from pyanaconda.core.constants import (
+    NETWORK_CONNECTION_TIMEOUT,
+    REPO_ORIGIN_TREEINFO,
+    URL_TYPE_METALINK,
+)
 from pyanaconda.modules.common.structures.payload import RepoConfigurationData
-from pyanaconda.modules.payloads.payload.dnf.repositories import generate_treeinfo_repository, \
-    update_treeinfo_repositories
-from pyanaconda.modules.payloads.payload.dnf.tree_info import TreeInfoMetadata, NoTreeInfoError, \
-    InvalidTreeInfoError, LoadTreeInfoMetadataTask, LoadTreeInfoMetadataResult
+from pyanaconda.modules.payloads.payload.dnf.repositories import (
+    update_treeinfo_repositories,
+)
+from pyanaconda.modules.payloads.payload.dnf.tree_info import (
+    InvalidTreeInfoError,
+    LoadTreeInfoMetadataResult,
+    LoadTreeInfoMetadataTask,
+    NoTreeInfoError,
+    TreeInfoMetadata,
+    generate_treeinfo_repository,
+)
 
 TREE_INFO_FEDORA = """
 [header]
@@ -419,7 +429,8 @@ class TreeInfoMetadataTestCase(unittest.TestCase):
             headers={"user-agent": "anaconda (anaconda)/bluesky"},
             proxies={
                 'http': 'http://user:pass@example.com:3128',
-                'https': 'http://user:pass@example.com:3128'
+                'https': 'http://user:pass@example.com:3128',
+                'ftp': 'http://user:pass@example.com:3128'
             },
             verify=True,
             cert=None,

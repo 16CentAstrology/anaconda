@@ -19,16 +19,26 @@
 # easy to test but we can try to improve that.
 #
 
-import unittest
 import os
-
-from unittest.mock import patch, mock_open, Mock, PropertyMock
+import unittest
 from textwrap import dedent
+from unittest.mock import Mock, PropertyMock, mock_open, patch
 
-from pyanaconda.startup_utils import print_dracut_errors, check_if_geolocation_should_be_used, \
-    start_geolocation_conditionally, wait_for_geolocation_and_use, apply_geolocation_result
-from pyanaconda.core.constants import GEOLOC_CONNECTION_TIMEOUT
+from pyanaconda.core.constants import (
+    GEOLOC_CONNECTION_TIMEOUT,
+    TIMEZONE_PRIORITY_GEOLOCATION,
+    DisplayModes,
+)
 from pyanaconda.modules.common.structures.timezone import GeolocationData
+from pyanaconda.startup_utils import (
+    apply_geolocation_result,
+    check_if_geolocation_should_be_used,
+    fallback_to_tui_if_gtk_ui_is_not_available,
+    print_dracut_errors,
+    start_geolocation_conditionally,
+    wait_for_geolocation_and_use,
+)
+
 
 class StartupUtilsTestCase(unittest.TestCase):
 
@@ -215,13 +225,15 @@ class StartupUtilsGeolocApplyTestCase(unittest.TestCase):
             timezone="Europe/Madrid"
         )
         tz_proxy = tz_mock.get_proxy.return_value
-        tz_proxy.Timezone = ""
         loc_proxy = loc_mock.get_proxy.return_value
         loc_proxy.Language = ""
 
         apply_geolocation_result(None)
 
-        assert tz_proxy.Timezone == "Europe/Madrid"
+        tz_proxy.SetTimezoneWithPriority.assert_called_once_with(
+            "Europe/Madrid",
+            TIMEZONE_PRIORITY_GEOLOCATION
+        )
         setup_locale_mock.assert_called_once_with("es_ES.UTF-8", loc_proxy, text_mode=False)
         assert os.environ == {"LANG": "es_ES.UTF-8"}
 
@@ -239,13 +251,15 @@ class StartupUtilsGeolocApplyTestCase(unittest.TestCase):
             timezone="Europe/Madrid"
         )
         tz_proxy = tz_mock.get_proxy.return_value
-        tz_proxy.Timezone = ""
         loc_proxy = loc_mock.get_proxy.return_value
         loc_proxy.Language = ""
 
         apply_geolocation_result(None)
 
-        assert tz_proxy.Timezone == "Europe/Madrid"
+        tz_proxy.SetTimezoneWithPriority.assert_called_once_with(
+            "Europe/Madrid",
+            TIMEZONE_PRIORITY_GEOLOCATION
+        )
         setup_locale_mock.assert_not_called()
         assert not os.environ
 
@@ -263,14 +277,16 @@ class StartupUtilsGeolocApplyTestCase(unittest.TestCase):
             timezone="Europe/Madrid"
         )
         tz_proxy = tz_mock.get_proxy.return_value
-        tz_proxy.Timezone = ""
         loc_proxy = loc_mock.get_proxy.return_value
         loc_proxy.Language = "ko_KO.UTF-8"
         loc_proxy.LanguageKickstarted = True
 
         apply_geolocation_result(None)
 
-        assert tz_proxy.Timezone == "Europe/Madrid"
+        tz_proxy.SetTimezoneWithPriority.assert_called_once_with(
+            "Europe/Madrid",
+            TIMEZONE_PRIORITY_GEOLOCATION
+        )
         setup_locale_mock.assert_not_called()
         assert not os.environ
 
@@ -297,3 +313,63 @@ class StartupUtilsGeolocApplyTestCase(unittest.TestCase):
         assert tz_proxy.Timezone == ""
         setup_locale_mock.assert_called_once_with("es_ES.UTF-8", loc_proxy, text_mode=False)
         assert os.environ == {"LANG": "es_ES.UTF-8"}
+
+
+class TestUIHelpers(unittest.TestCase):
+
+    @patch("pyanaconda.startup_utils.pkgutil")
+    @patch("pyanaconda.startup_utils.flags")
+    def test_fallback_tui_when_gtk_ui_not_available(self, mocked_flags, mocked_pkgutil):
+        mocked_anaconda = Mock()
+
+        def check_method(gui_mode,
+                         webui_supported,
+                         gtk_available,
+                         expected_display_mode,
+                         expected_rd_output):
+            mocked_anaconda.gui_mode = gui_mode
+            mocked_anaconda.is_webui_supported = webui_supported
+
+            # prefilled values
+            mocked_anaconda.display_mode = ""
+            mocked_flags.use_rd = None
+            mocked_flags.rd_question = None
+
+            if gtk_available:
+                mocked_pkgutil.iter_modules.return_value = [(None, "pyanaconda.ui.gui")]
+            else:
+                mocked_pkgutil.iter_modules.return_value = [(None, "pyanaconda.ui.webui")]
+
+            fallback_to_tui_if_gtk_ui_is_not_available(mocked_anaconda)
+
+            assert mocked_flags.use_rd is expected_rd_output
+            assert mocked_flags.rd_question is expected_rd_output
+            assert mocked_anaconda.display_mode == expected_display_mode
+
+        # UI is not wanted
+        check_method(gui_mode=False,
+                     webui_supported=False,
+                     gtk_available=True,
+                     expected_display_mode="",
+                     expected_rd_output=None)
+
+        # check result when web ui is supported
+        check_method(gui_mode=True,
+                     webui_supported=True,
+                     gtk_available=True,
+                     expected_display_mode="",
+                     expected_rd_output=None)
+
+        # check result when gtk UI is not available
+        check_method(gui_mode=True,
+                     webui_supported=False,
+                     gtk_available=False,
+                     expected_display_mode=DisplayModes.TUI,
+                     expected_rd_output=False)
+
+        # check result when GTK is available
+        check_method(gui_mode=True,
+                     webui_supported=False,
+                     gtk_available=True,
+                     expected_display_mode="",
+                     expected_rd_output=None)

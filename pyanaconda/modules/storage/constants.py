@@ -19,12 +19,20 @@
 #
 from enum import Enum, unique
 
-from pyanaconda.core.constants import CLEAR_PARTITIONS_NONE, CLEAR_PARTITIONS_ALL, \
-    CLEAR_PARTITIONS_LIST, CLEAR_PARTITIONS_LINUX, CLEAR_PARTITIONS_DEFAULT, BOOTLOADER_DISABLED, \
-    BOOTLOADER_ENABLED, BOOTLOADER_SKIPPED, ISCSI_INTERFACE_UNSET, ISCSI_INTERFACE_DEFAULT,\
-    ISCSI_INTERFACE_IFACENAME
+from pyanaconda.core.constants import (
+    BOOTLOADER_DISABLED,
+    BOOTLOADER_ENABLED,
+    BOOTLOADER_SKIPPED,
+    CLEAR_PARTITIONS_ALL,
+    CLEAR_PARTITIONS_DEFAULT,
+    CLEAR_PARTITIONS_LINUX,
+    CLEAR_PARTITIONS_LIST,
+    CLEAR_PARTITIONS_NONE,
+    ISCSI_INTERFACE_DEFAULT,
+    ISCSI_INTERFACE_IFACENAME,
+    ISCSI_INTERFACE_UNSET,
+)
 from pyanaconda.core.i18n import N_
-
 
 INCONSISTENT_SECTOR_SIZES_SUGGESTIONS = N_(
     "Workarounds for manual installations:\n"
@@ -79,3 +87,14 @@ class ZIPLSecureBoot(Enum):
     DISABLED = "0"
     ENABLED = "1"
     AUTO = "auto"
+
+
+WINDOWS_PARTITION_TYPES = [
+    "e3c9e316-0b5c-4db8-817d-f92df00215ae",  # Microsoft Reserved Partition
+    "ebd0a0a2-b9e5-4433-87c0-68b6b72699c7",  # Microsoft Basic Data
+    "de94bba4-06d1-4d40-a16a-bfd50179d6ac",  # Windows Recovery Environment
+    "af9b60a0-1431-4f62-bc68-3311714a69ad",  # Logical Disk Manager Data Partition
+]
+
+
+EFI_PARTITION_TYPE = "c12a7328-f81f-11d2-ba4b-00a0c93ec93b"

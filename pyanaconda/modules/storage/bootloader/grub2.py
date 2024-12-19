@@ -17,24 +17,24 @@
 #
 import os
 import re
-from _ped import PARTITION_BIOS_GRUB  # pylint: disable=no-name-in-module
 
+from _ped import PARTITION_BIOS_GRUB  # pylint: disable=no-name-in-module
 from blivet.devicelibs import raid
 
-from pyanaconda.modules.storage.bootloader.base import BootLoader, BootLoaderError
+from pyanaconda.anaconda_loggers import get_module_logger
 from pyanaconda.core import util
 from pyanaconda.core.configuration.anaconda import conf
 from pyanaconda.core.i18n import _
 from pyanaconda.core.path import open_with_perm
-from pyanaconda.product import productName
+from pyanaconda.core.product import get_product_name
+from pyanaconda.modules.storage.bootloader.base import BootLoader, BootLoaderError
 
-from pyanaconda.anaconda_loggers import get_module_logger
 log = get_module_logger(__name__)
 
 __all__ = ["GRUB2", "IPSeriesGRUB2"]
 
 
-class SerialConsoleOptions(object):
+class SerialConsoleOptions:
     """The serial console options."""
 
     def __init__(self):
@@ -184,7 +184,7 @@ class GRUB2(BootLoader):
 
     @property
     def stage2_format_types(self):
-        if productName.startswith("Red Hat "): # pylint: disable=no-member
+        if get_product_name().startswith("Red Hat "): # pylint: disable=no-member
             return ["xfs", "ext4", "ext3", "ext2"]
         else:
             return ["ext4", "ext3", "ext2", "btrfs", "xfs"]
@@ -350,7 +350,7 @@ class GRUB2(BootLoader):
                 root=conf.target.system_root
             )
             if rc:
-                log.error("failed to set default menu entry to %s", productName)
+                log.error("failed to set default menu entry to %s", get_product_name())
 
         # set menu_auto_hide grubenv variable if we should enable menu_auto_hide
         # set boot_success so that the menu is hidden on the boot after install
@@ -480,13 +480,12 @@ class GRUB2(BootLoader):
         # If the first partition starts too low and there is no biosboot partition show an error.
         error_msg = None
         biosboot = False
-        parts = self.stage1_disk.format.parted_disk.partitions
-        for p in parts:
-            if p.getFlag(PARTITION_BIOS_GRUB):
+        for p in self.stage1_disk.children:
+            if p.format.type == "biosboot" or p.parted_partition.getFlag(PARTITION_BIOS_GRUB):
                 biosboot = True
                 break
 
-            start = p.geometry.start * p.disk.device.sectorSize
+            start = p.parted_partition.geometry.start * p.parted_partition.disk.device.sectorSize
             if start < min_start:
                 error_msg = _("%(deviceName)s may not have enough space for grub2 to embed "
                               "core.img when using the %(fsType)s file system on %(deviceType)s") \

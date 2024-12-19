@@ -17,10 +17,10 @@
 #
 import locale as locale_mod
 import unittest
-import pytest
-
-from unittest.mock import call, patch, MagicMock
 from io import StringIO
+from unittest.mock import MagicMock, call, patch
+
+import pytest
 
 from pyanaconda import localization
 from pyanaconda.core.constants import DEFAULT_LANG
@@ -62,6 +62,10 @@ class LangcodeLocaleParsingTests(unittest.TestCase):
         assert localization.locale_supported_in_console("en")
         assert localization.locale_supported_in_console("en_US")
 
+        with patch("pyanaconda.localization.get_locale_scripts") as locale_scripts_mock:
+            locale_scripts_mock.return_value = []
+            assert localization.locale_supported_in_console("en") is False
+
     def test_native_name(self):
         assert localization.get_native_name("de") == "Deutsch"
         assert localization.get_native_name("cs_CZ") == "Čeština (Česko)"
@@ -87,7 +91,10 @@ class LangcodeLocaleParsingTests(unittest.TestCase):
         assert "fr(oss)" in layouts
         assert "de(nodeadkeys)" in layouts
 
-    @patch.dict("pyanaconda.localization.os.environ", dict())
+    def test_locale_timezones(self):
+        assert "Europe/Oslo" in localization.get_locale_timezones("no")
+
+    @patch.dict("pyanaconda.localization.os.environ", {})
     def test_xlated_tz(self):
         localization.os.environ["LANG"] = "en_US"
         assert "Europe/Barcelona" == localization.get_xlated_timezone("Europe/Barcelona")
@@ -120,7 +127,7 @@ class SetupLocaleTest(unittest.TestCase):
 
         assert locale == "sk"
 
-    @patch.dict("pyanaconda.localization.os.environ", dict())
+    @patch.dict("pyanaconda.localization.os.environ", {})
     @patch("pyanaconda.localization.locale_supported_in_console", return_value=False)
     @patch("pyanaconda.localization.setenv")
     @patch("pyanaconda.localization.locale_mod.setlocale")
@@ -187,7 +194,7 @@ class SetupLocaleEnvironmentTest(unittest.TestCase):
 
         assert DEFAULT_LANG in localization.os.environ["LANG"]
 
-    @patch.dict("pyanaconda.localization.os.environ", dict())
+    @patch.dict("pyanaconda.localization.os.environ", {})
     def test_setup_locale_environment_vars(self):
         """Test setup_locale_environment() with multiple environment variables"""
         for varname in ("LANGUAGE", "LC_ALL", "LC_MESSAGES", "LANG"):
@@ -209,7 +216,7 @@ class SetupLocaleEnvironmentTest(unittest.TestCase):
         assert DEFAULT_LANG == localization.os.environ["LANG"]
 
     @patch("pyanaconda.localization.open")
-    @patch.dict("pyanaconda.localization.os.environ", dict())
+    @patch.dict("pyanaconda.localization.os.environ", {})
     def test_setup_locale_environment_fallback_efi_ok(self, open_mock):
         """Test setup_locale_environment() fallback to EFI vars"""
         # success with valid data
@@ -223,7 +230,7 @@ class SetupLocaleEnvironmentTest(unittest.TestCase):
         assert "de" in localization.os.environ["LANG"]
 
     @patch("pyanaconda.localization.open")
-    @patch.dict("pyanaconda.localization.os.environ", dict())
+    @patch.dict("pyanaconda.localization.os.environ", {})
     def test_setup_locale_environment_fallback_efi_bad(self, open_mock):
         """Test setup_locale_environment() fallback to EFI vars with bad contents"""
         # failure with invalid data - too short

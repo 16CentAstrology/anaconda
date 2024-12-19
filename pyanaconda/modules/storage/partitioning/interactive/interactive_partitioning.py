@@ -20,14 +20,18 @@ from blivet.errors import StorageError
 
 from pyanaconda.anaconda_loggers import get_module_logger
 from pyanaconda.modules.storage.bootloader.execution import setup_bootloader
-from pyanaconda.modules.storage.partitioning.automatic.automatic_partitioning import \
-    AutomaticPartitioningTask
+from pyanaconda.modules.storage.checker.utils import (
+    storage_checker,
+    verify_luks_devices_have_key,
+)
+from pyanaconda.modules.storage.partitioning.automatic.automatic_partitioning import (
+    AutomaticPartitioningTask,
+)
 from pyanaconda.modules.storage.partitioning.base_partitioning import PartitioningTask
-from pyanaconda.modules.storage.checker.utils import storage_checker, verify_luks_devices_have_key
 
 log = get_module_logger(__name__)
 
-__all__ = ["InteractivePartitioningTask", "InteractiveAutoPartitioningTask"]
+__all__ = ["InteractiveAutoPartitioningTask", "InteractivePartitioningTask"]
 
 
 class InteractivePartitioningTask(PartitioningTask):

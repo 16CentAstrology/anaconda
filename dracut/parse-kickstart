@@ -112,7 +112,7 @@ def setting_only_hostname(net, args):
 
 proc_cmdline = read_cmdline("/proc/cmdline")
 
-class DracutArgsMixin(object):
+class DracutArgsMixin():
     """A mixin class to make a Command generate dracut args."""
     def dracut_args(self, args, lineno, obj):
         raise NotImplementedError
@@ -157,7 +157,7 @@ class DracutURL(Url, DracutArgsMixin):
         if self.noverifyssl:
             args.append("rd.noverifyssl")
         if self.proxy:
-            args.append("inst.proxy=%s" % self.proxy)
+            args.append("proxy=%s" % self.proxy)
 
         return "\n".join(args)
 

@@ -19,36 +19,40 @@
 #
 
 import glob
-import os
-import os.path
 import sys
-import tempfile
 import time
 import warnings
-
 from contextlib import contextmanager
 
-from pyanaconda.anaconda_loggers import get_module_logger, get_stdout_logger
-from pyanaconda.core import util
-from pyanaconda.core.configuration.anaconda import conf
-from pyanaconda.core.kickstart import VERSION, commands as COMMANDS
-from pyanaconda.core.kickstart.specification import KickstartSpecification
-from pyanaconda.core.constants import IPMI_ABORTED
-from pyanaconda.errors import ScriptError, errorHandler
-from pyanaconda.flags import flags
-from pyanaconda.core.i18n import _
-from pyanaconda.modules.common.constants.services import BOSS
-from pyanaconda.modules.common.structures.kickstart import KickstartReport
-
 from pykickstart.base import KickstartCommand, RemovedCommand
-from pykickstart.constants import KS_SCRIPT_POST, KS_SCRIPT_PRE, KS_SCRIPT_TRACEBACK, KS_SCRIPT_PREINSTALL
+from pykickstart.constants import KS_SCRIPT_PRE
 from pykickstart.errors import KickstartError, KickstartParseWarning
 from pykickstart.ko import KickstartObject
 from pykickstart.parser import KickstartParser
 from pykickstart.parser import Script as KSScript
-from pykickstart.sections import NullSection, PostScriptSection, PreScriptSection, \
-    PreInstallScriptSection, OnErrorScriptSection, TracebackScriptSection, Section
+from pykickstart.sections import (
+    NullSection,
+    OnErrorScriptSection,
+    PostScriptSection,
+    PreInstallScriptSection,
+    PreScriptSection,
+    Section,
+    TracebackScriptSection,
+)
 from pykickstart.version import returnClassForVersion
+
+from pyanaconda.anaconda_loggers import get_module_logger, get_stdout_logger
+from pyanaconda.core import util
+from pyanaconda.core.constants import IPMI_ABORTED
+from pyanaconda.core.i18n import _
+from pyanaconda.core.kickstart import VERSION
+from pyanaconda.core.kickstart import commands as COMMANDS
+from pyanaconda.core.kickstart.scripts import run_script
+from pyanaconda.core.kickstart.specification import KickstartSpecification
+from pyanaconda.errors import ScriptError, errorHandler
+from pyanaconda.flags import flags
+from pyanaconda.modules.common.constants.services import BOSS
+from pyanaconda.modules.common.structures.kickstart import KickstartReport
 
 log = get_module_logger(__name__)
 stdoutLog = get_stdout_logger()
@@ -71,63 +75,22 @@ def check_kickstart_error():
 
 
 class AnacondaKSScript(KSScript):
-    """ Execute a kickstart script
-
-        This will write the script to a file named /tmp/ks-script- before
-        execution.
-        Output is logged by the program logger, the path specified by --log
-        or to /tmp/ks-script-\\*.log
-    """
     def run(self, chroot):
-        """ Run the kickstart script
-            @param chroot directory path to chroot into before execution
-        """
-        if self.inChroot:
-            scriptRoot = chroot
-        else:
-            scriptRoot = "/"
+        rc, log_file = run_script(self, chroot)
+        if self.errorOnFail and rc != 0:
+            err = ""
+            with open(log_file, "r") as fp:
+                err = "".join(fp.readlines())
 
-        (fd, path) = tempfile.mkstemp("", "ks-script-", scriptRoot + "/tmp")
-
-        os.write(fd, self.script.encode("utf-8"))
-        os.close(fd)
-        os.chmod(path, 0o700)
-
-        # Always log stdout/stderr from scripts.  Using --log just lets you
-        # pick where it goes.  The script will also be logged to program.log
-        # because of execWithRedirect.
-        if self.logfile:
-            if self.inChroot:
-                messages = "%s/%s" % (scriptRoot, self.logfile)
-            else:
-                messages = self.logfile
-
-            d = os.path.dirname(messages)
-            if not os.path.exists(d):
-                os.makedirs(d)
-        else:
-            # Always log outside the chroot, we copy those logs into the
-            # chroot later.
-            messages = "/tmp/%s.log" % os.path.basename(path)
-
-        with open(messages, "w") as fp:
-            rc = util.execWithRedirect(self.interp, ["/tmp/%s" % os.path.basename(path)],
-                                       stdout=fp,
-                                       root=scriptRoot)
-
-        if rc != 0:
-            script_log.error("Error code %s running the kickstart script at line %s", rc, self.lineno)
-            if self.errorOnFail:
-                err = ""
-                with open(messages, "r") as fp:
-                    err = "".join(fp.readlines())
-
+            if self.type == KS_SCRIPT_PRE:
                 # Show error dialog even for non-interactive
                 flags.ksprompt = True
 
                 errorHandler.cb(ScriptError(self.lineno, err))
                 util.ipmi_report(IPMI_ABORTED)
                 sys.exit(0)
+            else:
+                return self.lineno, err
 
 
 class AnacondaInternalScript(AnacondaKSScript):
@@ -191,28 +154,10 @@ class AnacondaKickstartSpecification(KickstartSpecification):
     """The kickstart specification of the main process."""
 
     commands = {
-        "autostep": COMMANDS.AutoStep,
-        "cmdline": COMMANDS.DisplayMode,
-        "driverdisk": COMMANDS.DriverDisk,
-        "eula": COMMANDS.Eula,
-        "graphical": COMMANDS.DisplayMode,
         "halt": COMMANDS.Reboot,
-        "logging": COMMANDS.Logging,
-        "mediacheck": COMMANDS.MediaCheck,
-        "method": COMMANDS.Method,
         "poweroff": COMMANDS.Reboot,
         "reboot": COMMANDS.Reboot,
-        "rescue": COMMANDS.Rescue,
         "shutdown": COMMANDS.Reboot,
-        "sshpw": COMMANDS.SshPw,
-        "text": COMMANDS.DisplayMode,
-        "updates": COMMANDS.Updates,
-        "vnc": COMMANDS.Vnc,
-    }
-
-    commands_data = {
-        "DriverDiskData": COMMANDS.DriverDiskData,
-        "SshPwData": COMMANDS.SshPwData,
     }
 
     @classmethod
@@ -328,7 +273,7 @@ def preScriptPass(f):
     runPreScripts(ksparser.handler.scripts)
 
 
-def parseKickstart(handler, f, strict_mode=False, pass_to_boss=False):
+def parseKickstart(handler, f, strict_mode=False):
     # preprocessing the kickstart file has already been handled in initramfs.
 
     ksparser = AnacondaKSParser(handler)
@@ -351,16 +296,15 @@ def parseKickstart(handler, f, strict_mode=False, pass_to_boss=False):
             warnings.simplefilter("always", category=KickstartParseWarning)
 
             # Parse the kickstart file in DBus modules.
-            if pass_to_boss:
-                boss = BOSS.get_proxy()
-                report = KickstartReport.from_structure(
-                    boss.ReadKickstartFile(f)
-                )
-                for warn in report.warning_messages:
-                    warnings.warn(warn.message, KickstartParseWarning)
-                if not report.is_valid():
-                    message = "\n\n".join(map(str, report.error_messages))
-                    raise KickstartError(message)
+            boss = BOSS.get_proxy()
+            report = KickstartReport.from_structure(
+                boss.ReadKickstartFile(f)
+            )
+            for warn in report.warning_messages:
+                warnings.warn(warn.message, KickstartParseWarning)
+            if not report.is_valid():
+                message = "\n\n".join(map(str, report.error_messages))
+                raise KickstartError(message)
 
             # Parse the kickstart file in anaconda.
             ksparser.readKickstart(f)
@@ -404,19 +348,6 @@ def appendPostScripts(ksdata):
     ksparser = AnacondaKSParser(ksdata, scriptClass=AnacondaInternalScript)
     ksparser.readKickstartFromString(scripts, reset=False)
 
-
-def runPostScripts(scripts):
-    postScripts = [s for s in scripts if s.type == KS_SCRIPT_POST]
-
-    if len(postScripts) == 0:
-        return
-
-    script_log.info("Running kickstart %%post script(s)")
-    for script in postScripts:
-        script.run(conf.target.system_root)
-    script_log.info("All kickstart %%post script(s) have been run")
-
-
 def runPreScripts(scripts):
     preScripts = [s for s in scripts if s.type == KS_SCRIPT_PRE]
 
@@ -430,24 +361,3 @@ def runPreScripts(scripts):
         script.run("/")
 
     script_log.info("All kickstart %%pre script(s) have been run")
-
-
-def runPreInstallScripts(scripts):
-    preInstallScripts = [s for s in scripts if s.type == KS_SCRIPT_PREINSTALL]
-
-    if len(preInstallScripts) == 0:
-        return
-
-    script_log.info("Running kickstart %%pre-install script(s)")
-
-    for script in preInstallScripts:
-        script.run("/")
-
-    script_log.info("All kickstart %%pre-install script(s) have been run")
-
-
-def runTracebackScripts(scripts):
-    script_log.info("Running kickstart %%traceback script(s)")
-    for script in filter(lambda s: s.type == KS_SCRIPT_TRACEBACK, scripts):
-        script.run("/")
-    script_log.info("All kickstart %%traceback script(s) have been run")

@@ -1,29 +1,28 @@
-# unit tests for driver disk utilities (utils/dd)
+# unit tests for driver disk utilities (dracut/dd)
 
 import os
 import shutil
-import unittest
-import tempfile
 import subprocess
-
+import tempfile
+import unittest
 from abc import ABC
-
-from contextlib import contextmanager
 from collections import namedtuple
-from rpmfluff import SourceFile, GeneratedSourceFile, SimpleRpmBuild
-from rpmfluff.utils import expectedArch
+from contextlib import contextmanager
+
+from rpmfluff import GeneratedSourceFile, SimpleRpmBuild, SourceFile
 from rpmfluff.make import make_elf
+from rpmfluff.utils import expectedArch
 from shutup import shutup
 
 TOP_SRCDIR = os.environ.get("top_builddir", "../..")
-UTILDIR = os.path.join(TOP_SRCDIR, "utils/dd")
+DD_DIR = os.path.join(TOP_SRCDIR, "dracut/dd")
 
 # helpers for calling the utilities
 Driver = namedtuple("Driver", "source name flags description")
 
 
 def dd_list(dd_path, kernel_ver, anaconda_ver):
-    out = subprocess.check_output([os.path.join(UTILDIR, "dd_list"),
+    out = subprocess.check_output([os.path.join(DD_DIR, "dd_list"),
                                    '-d', dd_path,
                                    '-k', kernel_ver,
                                    '-a', anaconda_ver],
@@ -32,7 +31,7 @@ def dd_list(dd_path, kernel_ver, anaconda_ver):
 
 
 def dd_extract(rpm_path, outdir, kernel_ver, flags='-blmf'):
-    out = subprocess.check_output([os.path.join(UTILDIR, "dd_extract"),
+    out = subprocess.check_output([os.path.join(DD_DIR, "dd_extract"),
                                    flags,
                                    '-r', rpm_path,
                                    '-d', outdir,
@@ -129,6 +128,14 @@ kofile = TextRPMFile(
     path="/lib/modules/KERNELVER/extra/net/fun.ko",
     contents="KERNEL MODULE??? YOU BETCHA"
 )
+koxzfile = TextRPMFile(
+    path="/lib/modules/KERNELVER/extra/net/fun.ko.xz",
+    contents="XZ COMPRESSED KERNEL MODULE??? YOU BETCHA"
+)
+kozstfile = TextRPMFile(
+    path="/lib/modules/KERNELVER/extra/net/fun.ko.zst",
+    contents="ZSTD COMPRESSED KERNEL MODULE??? YOU BETCHA"
+)
 
 
 # Finally, the actual test cases
@@ -153,8 +160,8 @@ class ASelfTestCase(unittest.TestCase):
 
     def test_utils_exist(self):
         """check that the dd utilities exist"""
-        assert "dd_list" in os.listdir(UTILDIR)
-        assert "dd_extract" in os.listdir(UTILDIR)
+        assert "dd_list" in os.listdir(DD_DIR)
+        assert "dd_extract" in os.listdir(DD_DIR)
 
 
 class DD_List_TestCase(unittest.TestCase):
@@ -240,7 +247,7 @@ class DD_Extract_TestCase(unittest.TestCase):
         cls.k_ver = "4.1.4-333"
         cls.a_ver = "22.0"
         cls.tmpdir = tempfile.mkdtemp(prefix="dd_tests.")
-        cls.rpmpayload = (binfile, kofile, fwfile, libfile)
+        cls.rpmpayload = (binfile, kofile, koxzfile, kozstfile, fwfile, libfile)
         make_rpm(cls.tmpdir, payload=cls.rpmpayload)
         (cls.rpmfile,) = listfiles(cls.tmpdir)
 
@@ -284,9 +291,9 @@ class DD_Extract_TestCase(unittest.TestCase):
                 assert binmode & expectmode == expectmode
 
     def test_dd_extract_modules(self):
-        """dd_extract: using --modules extracts only .ko files"""
+        """dd_extract: using --modules extracts only .ko, .ko.bz2, .ko.gz, .ko.xz and .ko.zst files"""
         outfiles = self.dd_extract(flags='--modules')
-        assert outfiles == set([self.outdir+kofile.path])
+        assert outfiles == set([self.outdir+kofile.path, self.outdir+koxzfile.path, self.outdir+kozstfile.path])
 
     def test_dd_extract_binaries(self):
         """dd_extract: using --binaries extracts only /bin, /sbin, etc."""

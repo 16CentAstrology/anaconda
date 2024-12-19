@@ -18,23 +18,24 @@
 import fnmatch
 import hashlib
 import os
-import rpm
 
+import rpm
 from blivet.size import Size
+from libdnf.transaction import TransactionItemState_ERROR
 
 from pyanaconda.anaconda_loggers import get_module_logger
 from pyanaconda.core.configuration.anaconda import conf
-from pyanaconda.core.payload import parse_hdd_url
-from pyanaconda.core.regexes import VERSION_DIGITS
-from pyanaconda.core.util import execWithCapture
 from pyanaconda.core.hw import is_lpae_available
 from pyanaconda.core.path import join_paths
+from pyanaconda.core.payload import parse_hdd_url
+from pyanaconda.core.product import get_product_name, get_product_version
+from pyanaconda.core.regexes import VERSION_DIGITS
+from pyanaconda.core.util import execWithCapture
 from pyanaconda.modules.common.constants.objects import DEVICE_TREE, DISK_SELECTION
 from pyanaconda.modules.common.constants.services import STORAGE
 from pyanaconda.modules.common.structures.packages import PackagesSelectionData
-from pyanaconda.modules.payloads.constants import SourceType
-from pyanaconda.product import productName, productVersion
 from pyanaconda.modules.payloads.base.utils import sort_kernel_version_list
+from pyanaconda.modules.payloads.constants import SourceType
 
 log = get_module_logger(__name__)
 
@@ -89,11 +90,11 @@ def get_product_release_version():
     :return: a string with the release version
     """
     try:
-        release_version = VERSION_DIGITS.match(productVersion).group(1)
+        release_version = VERSION_DIGITS.match(get_product_version()).group(1)
     except AttributeError:
         release_version = "rawhide"
 
-    log.debug("Release version of %s is %s.", productName, release_version)
+    log.debug("Release version of %s is %s.", get_product_name(), release_version)
     return release_version
 
 
@@ -411,3 +412,17 @@ def protect_installation_devices(previous_devices, current_devices):
             protected_devices.append(spec)
 
     disk_selection_proxy.ProtectedDevices = protected_devices
+
+
+def transaction_has_errors(transaction):
+    """Detect if finished DNF transaction has any errors.
+
+    :param transaction: the DNF transaction
+    :return: True if the transaction has any error, otherwise False
+    """
+    has_errors = False
+    for tsi in transaction:
+        if tsi.state == TransactionItemState_ERROR:
+            log.error("The transaction contains item %s in error state.", tsi)
+            has_errors = True
+    return has_errors

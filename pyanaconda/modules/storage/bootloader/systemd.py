@@ -15,15 +15,16 @@
 # License and may only be used or replicated with the express permission of
 # Red Hat, Inc.
 #
-
-from pyanaconda.modules.storage.bootloader.base import BootLoader, BootLoaderError
+from pyanaconda.anaconda_loggers import get_module_logger
 from pyanaconda.core import util
 from pyanaconda.core.configuration.anaconda import conf
+from pyanaconda.core.constants import PAYLOAD_TYPE_DNF
 from pyanaconda.core.i18n import _
 from pyanaconda.core.path import join_paths
-from pyanaconda.product import productName
+from pyanaconda.core.product import get_product_name
+from pyanaconda.modules.common.constants.services import PAYLOADS
+from pyanaconda.modules.storage.bootloader.base import BootLoader, BootLoaderError
 
-from pyanaconda.anaconda_loggers import get_module_logger
 log = get_module_logger(__name__)
 
 __all__ = ["SystemdBoot"]
@@ -75,6 +76,29 @@ class SystemdBoot(BootLoader):
         """ Full path to configuration file. """
         return "%s/%s" % (self.config_dir, self._config_file)
 
+    def check(self):
+        """Verify the bootloader configuration."""
+        if self._get_payload_type() != PAYLOAD_TYPE_DNF:
+            self.errors.append(_(
+                "Systemd-boot cannot be utilized with the current type of payload. "
+                "Choose an installation media that supports package installation."
+            ))
+            return False
+
+        return super().check()
+
+    @staticmethod
+    def _get_payload_type():
+        """Get the type of the active payload."""
+        payloads_proxy = PAYLOADS.get_proxy()
+        object_path = payloads_proxy.ActivePayload
+
+        if not object_path:
+            return None
+
+        object_proxy = PAYLOADS.get_proxy(object_path)
+        return object_proxy.Type
+
     # copy console update from grub2.py
     def write_config_console(self, config):
         log.info("systemd.py: write_config_console")
@@ -112,6 +136,11 @@ class SystemdBoot(BootLoader):
             root_uuid = util.execWithCapture("findmnt", [ "-sfn", "-oUUID", "/" ],
                                              root=conf.target.system_root)
             args += " root=UUID=" + root_uuid
+
+            for image in self.images:
+                if image.device.type == "btrfs subvolume":
+                    args += "rootflags=subvol=" + image.device.name
+
             config.write(args)
 
         # rather than creating a mess in python lets just
@@ -134,14 +163,19 @@ class SystemdBoot(BootLoader):
         log.info("systemd.py: install systemd boot install (root=%s)", conf.target.system_root)
 
         # the --esp-path= isn't strictly required, but we want to be explicit about it.
-        rc = util.execWithRedirect("bootctl", [ "install", "--esp-path=/boot/efi",
-                                                "--efi-boot-option-description=" + productName.split("-")[0] ],
-                                   root=conf.target.system_root,
-                                   env_prune=['MALLOC_PERTURB_'])
+        rc = util.execWithRedirect(
+            "bootctl",
+            [
+                "install",
+                "--esp-path=/boot/efi",
+                "--efi-boot-option-description=" + get_product_name().split("-")[0]
+            ],
+            root=conf.target.system_root,
+            env_prune=['MALLOC_PERTURB_']
+        )
         if rc:
             raise BootLoaderError(_("bootctl failed to install UEFI boot loader. "
                                     "More information may be found in the log files stored in /tmp"))
-
 
     def write_config_images(self, config):
         return True

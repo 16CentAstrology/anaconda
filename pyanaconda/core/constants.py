@@ -19,26 +19,16 @@
 
 # Used for digits, ascii_letters, punctuation constants
 import string
-from pyanaconda.core.i18n import N_
-
 from enum import Enum
+
+from pyanaconda.core.i18n import N_
+from pyanaconda.core.product import get_product_name, get_product_version
 
 # Use -1 to indicate that the selinux configuration is unset
 SELINUX_DEFAULT = -1
 
 # where to look for 3rd party addons
 ADDON_PATHS = ["/usr/share/anaconda/addons"]
-
-# common string needs to be easy to change
-from pyanaconda import product
-productName = product.productName
-productVersion = product.productVersion
-isFinal = product.isFinal
-
-# for use in device names, eg: "fedora", "rhel"
-shortProductName = productName.lower()          # pylint: disable=no-member
-if productName.count(" "):                      # pylint: disable=no-member
-    shortProductName = ''.join(s[0] for s in shortProductName.split())
 
 # The default virtio port.
 VIRTIO_PORT = "/dev/virtio-ports/org.fedoraproject.anaconda.log.0"
@@ -60,12 +50,14 @@ SOURCES_DIR = MOUNT_DIR + "/sources"
 BASE_REPO_NAME = "anaconda"
 
 # Get list of repo names witch should be used as base repo
-DEFAULT_REPOS = [productName.split('-')[0].lower(),  # pylint: disable=no-member
-                 "fedora-modular-server",
-                 "rawhide",
-                 "BaseOS",      # Used by RHEL
-                 "baseos",      # Used by CentOS Stream
-                 "eln-baseos"]  # Used by Fedora ELN
+DEFAULT_REPOS = [
+    get_product_name().split('-')[0].lower(),  # pylint: disable=no-member
+    "fedora-modular-server",
+    "rawhide",
+    "BaseOS",      # Used by RHEL
+    "baseos",      # Used by CentOS Stream
+    "eln-baseos",  # Used by Fedora ELN
+]
 
 DBUS_ANACONDA_SESSION_ADDRESS = "DBUS_ANACONDA_SESSION_BUS_ADDRESS"
 
@@ -74,6 +66,12 @@ ANACONDA_BUS_ADDR_FILE = "/run/anaconda/bus.address"
 
 ANACONDA_CONFIG_DIR = "/etc/anaconda/"
 ANACONDA_CONFIG_TMP = "/run/anaconda/anaconda.conf"
+
+# file to store pid of the web viewer app to show Anaconda locally
+WEBUI_VIEWER_PID_FILE = "/run/anaconda/webui_script.pid"
+# flag file for Web UI to signalize that Anaconda backend is ready to be used
+# FIXME: Web UI should monitor the initialization itself
+BACKEND_READY_FLAG_FILE = "/run/anaconda/backend_ready"
 
 # NOTE: this should be LANG_TERRITORY.CODESET, e.g. en_US.UTF-8
 DEFAULT_LANG = "en_US.UTF-8"
@@ -84,8 +82,8 @@ DEFAULT_KEYBOARD = "us"
 
 DRACUT_SHUTDOWN_EJECT = "/run/initramfs/usr/lib/dracut/hooks/shutdown/99anaconda-eject.sh"
 
-# VNC questions
-USEVNC = N_("Start VNC")
+# RDP questions
+USERDP = N_("Use graphical mode via Remote Desktop Protocol")
 USETEXT = N_("Use text mode")
 
 # Quit message
@@ -103,8 +101,10 @@ GRAPHICAL_TARGET = 'graphical.target'
 NETWORK_CONNECTION_TIMEOUT = 46  # in seconds
 NETWORK_CONNECTED_CHECK_INTERVAL = 0.1  # in seconds
 
+NETWORK_CAPABILITY_TEAM = 1
+
 # Anaconda user agent
-USER_AGENT = "%s (anaconda)/%s" % (productName, productVersion)
+USER_AGENT = "%s (anaconda)/%s" % (get_product_name(), get_product_version())
 
 # Thread names
 THREAD_EXECUTE_STORAGE = "AnaExecuteStorageThread"
@@ -127,6 +127,7 @@ THREAD_NTP_SERVER_CHECK = "AnaNTPserver"
 THREAD_DBUS_TASK = "AnaTaskThread"
 THREAD_SUBSCRIPTION = "AnaSubscriptionThread"
 THREAD_SUBSCRIPTION_SPOKE_INIT = "AnaSubscriptionSpokeInitThread"
+THREAD_RDP_OBTAIN_HOSTNAME = "AnaRDPObtainHostnameThread"
 
 # Geolocation constants
 
@@ -246,8 +247,7 @@ NOTICEABLE_FREEZE = 0.1
 # all ASCII characters
 PW_ASCII_CHARS = string.digits + string.ascii_letters + string.punctuation + " "
 
-# screenshots
-SCREENSHOTS_DIRECTORY = "/tmp/anaconda-screenshots"
+PACKAGES_LIST_FILE = "/root/lorax-packages.log"
 
 CMDLINE_FILES = [
     "/proc/cmdline",
@@ -268,6 +268,9 @@ IPMI_STARTED = 0x7          # installation started
 IPMI_FINISHED = 0x8         # installation finished successfully
 IPMI_ABORTED = 0x9          # installation finished unsuccessfully, due to some non-exn error
 IPMI_FAILED = 0xA           # installation hit an exception
+
+# Wayland socket name to use
+WAYLAND_SOCKET_NAME = "wl-sysinstall-0"
 
 # X display number to use
 X_DISPLAY_NUMBER = 1
@@ -315,7 +318,7 @@ class DisplayModes(Enum):
 
 DISPLAY_MODE_NAME = {
     DisplayModes.GUI: "graphical mode",
-    DisplayModes.TUI: "text mode"
+    DisplayModes.TUI: "text mode",
 }
 
 INTERACTIVE_MODE_NAME = {
@@ -328,9 +331,6 @@ LOGGER_ANACONDA_ROOT = "anaconda"
 LOGGER_MAIN = "anaconda.main"
 LOGGER_STDOUT = "anaconda.stdout"
 LOGGER_PROGRAM = "program"
-LOGGER_PACKAGING = "packaging"
-LOGGER_DNF = "dnf"
-LOGGER_LIBREPO = "librepo"  # second DNF logger for librepo
 LOGGER_SIMPLELINE = "simpleline"
 
 # Timeout for starting X
@@ -421,13 +421,6 @@ SOURCE_TYPE_URL = "URL"
 SOURCE_TYPE_HDD = "HDD"
 SOURCE_TYPE_CDN = "CDN"
 
-# All types that use repo files.
-SOURCE_REPO_FILE_TYPES = (
-    SOURCE_TYPE_REPO_FILES,
-    SOURCE_TYPE_CLOSEST_MIRROR,
-    SOURCE_TYPE_CDN,
-)
-
 # Payload sources overriden by the CDN
 
 # This set lists sources the Red Hat CDN should automatically
@@ -514,3 +507,22 @@ ID_MODE_USE_DEFAULT = "ID_MODE_USE_DEFAULT"
 
 # Path to the initrd critical warnings log file created by us in Dracut.
 DRACUT_ERRORS_PATH = "/run/anaconda/initrd_errors.txt"
+
+# Timezone setting priorities
+TIMEZONE_PRIORITY_DEFAULT = 0
+TIMEZONE_PRIORITY_LANGUAGE = 30
+TIMEZONE_PRIORITY_GEOLOCATION = 50
+TIMEZONE_PRIORITY_KICKSTART = 70
+TIMEZONE_PRIORITY_USER = 90
+
+# FIPS mode minimum LUKS passphrase length
+FIPS_PASSPHRASE_MIN_LENGTH = 8
+
+
+# Installation categories
+CATEGORY_UNDEFINED = "UNDEFINED"
+CATEGORY_ENVIRONMENT = "ENVIRONMENT_CONFIGURATION"
+CATEGORY_STORAGE = "STORAGE_CONFIGURATION"
+CATEGORY_SOFTWARE = "SOFTWARE_INSTALLATION"
+CATEGORY_BOOTLOADER = "BOOTLOADER_INSTALLATION"
+CATEGORY_SYSTEM = "SYSTEM_CONFIGURATION"

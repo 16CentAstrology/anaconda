@@ -20,23 +20,28 @@
 import unittest
 from unittest.mock import Mock
 
-from tests.unit_tests.pyanaconda_tests import patch_dbus_publish_object
-
-from tests.unit_tests.pyanaconda_tests import check_task_creation, check_dbus_property
-
-from blivet.devices import StorageDevice, DiskDevice
+from blivet.devices import DiskDevice, StorageDevice
 from blivet.formats import get_format
 from blivet.size import Size
+from dasbus.typing import Bool, Str, get_variant
 
-from dasbus.typing import get_variant, Str, Bool
 from pyanaconda.modules.common.constants.objects import MANUAL_PARTITIONING
 from pyanaconda.modules.common.structures.partitioning import MountPointRequest
-from pyanaconda.modules.storage.partitioning.manual.manual_module import ManualPartitioningModule
-from pyanaconda.modules.storage.partitioning.manual.manual_interface import \
-    ManualPartitioningInterface
-from pyanaconda.modules.storage.partitioning.manual.manual_partitioning import \
-    ManualPartitioningTask
 from pyanaconda.modules.storage.devicetree import create_storage
+from pyanaconda.modules.storage.partitioning.manual.manual_interface import (
+    ManualPartitioningInterface,
+)
+from pyanaconda.modules.storage.partitioning.manual.manual_module import (
+    ManualPartitioningModule,
+)
+from pyanaconda.modules.storage.partitioning.manual.manual_partitioning import (
+    ManualPartitioningTask,
+)
+from tests.unit_tests.pyanaconda_tests import (
+    check_dbus_property,
+    check_task_creation,
+    patch_dbus_publish_object,
+)
 
 
 class ManualPartitioningInterfaceTestCase(unittest.TestCase):
@@ -71,6 +76,7 @@ class ManualPartitioningInterfaceTestCase(unittest.TestCase):
             "reformat": get_variant(Bool, False),
             "format-type": get_variant(Str, ""),
             "format-options": get_variant(Str, ""),
+            "ks-spec": get_variant(Str, ""),
             "mount-options": get_variant(Str, "")
         }
         self._check_dbus_property(
@@ -84,6 +90,7 @@ class ManualPartitioningInterfaceTestCase(unittest.TestCase):
             "reformat": get_variant(Bool, True),
             "format-type": get_variant(Str, "xfs"),
             "format-options": get_variant(Str, "-L BOOT"),
+            "ks-spec": get_variant(Str, ""),
             "mount-options": get_variant(Str, "user")
         }
         self._check_dbus_property(
@@ -97,6 +104,7 @@ class ManualPartitioningInterfaceTestCase(unittest.TestCase):
             "reformat": get_variant(Bool, False),
             "format-type": get_variant(Str, ""),
             "format-options": get_variant(Str, ""),
+            "ks-spec": get_variant(Str, ""),
             "mount-options": get_variant(Str, "")
         }
         request_2 = {
@@ -105,6 +113,7 @@ class ManualPartitioningInterfaceTestCase(unittest.TestCase):
             "reformat": get_variant(Bool, True),
             "format-type": get_variant(Str, ""),
             "format-options": get_variant(Str, ""),
+            "ks-spec": get_variant(Str, ""),
             "mount-options": get_variant(Str, "")
         }
         self._check_dbus_property(
@@ -170,18 +179,20 @@ class ManualPartitioningInterfaceTestCase(unittest.TestCase):
 
         assert self.interface.GatherRequests() == [
             {
-                'device-spec': get_variant(Str, '/dev/dev1'),
+                'device-spec': get_variant(Str, 'dev1'),
                 'format-options': get_variant(Str, ''),
                 'format-type': get_variant(Str, 'ext4'),
                 'mount-options': get_variant(Str, ''),
+                'ks-spec': get_variant(Str, ''),
                 'mount-point': get_variant(Str, '/'),
                 'reformat': get_variant(Bool, False)
             },
             {
-                'device-spec': get_variant(Str, '/dev/dev2'),
+                'device-spec': get_variant(Str, 'dev2'),
                 'format-options': get_variant(Str, ''),
                 'format-type': get_variant(Str, 'swap'),
                 'mount-options': get_variant(Str, ''),
+                'ks-spec': get_variant(Str, ''),
                 'mount-point': get_variant(Str, ''),
                 'reformat': get_variant(Bool, False)
             }
@@ -206,7 +217,7 @@ class ManualPartitioningInterfaceTestCase(unittest.TestCase):
 
         # Add requests for dev1 and dev3.
         req1 = MountPointRequest()
-        req1.device_spec = '/dev/dev1'
+        req1.device_spec = 'dev1'
         req1.format_options = '-L BOOT'
         req1.format_type = 'xfs'
         req1.mount_options = 'user'
@@ -214,7 +225,7 @@ class ManualPartitioningInterfaceTestCase(unittest.TestCase):
         req1.reformat = True
 
         req3 = MountPointRequest()
-        req3.device_spec = '/dev/dev3'
+        req3.device_spec = 'dev3'
         req3.mount_point = '/'
 
         self.module.set_requests([req1, req3])
@@ -222,17 +233,19 @@ class ManualPartitioningInterfaceTestCase(unittest.TestCase):
         # Get requests for dev1 and dev2.
         assert self.interface.GatherRequests() == [
             {
-                'device-spec': get_variant(Str, '/dev/dev1'),
+                'device-spec': get_variant(Str, 'dev1'),
                 'format-options': get_variant(Str, '-L BOOT'),
                 'format-type': get_variant(Str, 'xfs'),
+                'ks-spec': get_variant(Str, ''),
                 'mount-options': get_variant(Str, 'user'),
                 'mount-point': get_variant(Str, '/home'),
                 'reformat': get_variant(Bool, True)
             },
             {
-                'device-spec': get_variant(Str, '/dev/dev2'),
+                'device-spec': get_variant(Str, 'dev2'),
                 'format-options': get_variant(Str, ''),
                 'format-type': get_variant(Str, 'swap'),
+                'ks-spec': get_variant(Str, ''),
                 'mount-options': get_variant(Str, ''),
                 'mount-point': get_variant(Str, ''),
                 'reformat': get_variant(Bool, False)

@@ -21,13 +21,20 @@ from dasbus.server.interface import dbus_interface
 from dasbus.server.property import emits_properties_changed
 from dasbus.typing import *  # pylint: disable=wildcard-import
 
-from pyanaconda.modules.common.containers import TaskContainer
 from pyanaconda.modules.common.constants.interfaces import PAYLOAD_DNF
-from pyanaconda.modules.common.structures.comps import CompsEnvironmentData, CompsGroupData
+from pyanaconda.modules.common.containers import TaskContainer
+from pyanaconda.modules.common.structures.comps import (
+    CompsEnvironmentData,
+    CompsGroupData,
+)
+from pyanaconda.modules.common.structures.packages import (
+    PackagesConfigurationData,
+    PackagesSelectionData,
+)
 from pyanaconda.modules.common.structures.payload import RepoConfigurationData
-from pyanaconda.modules.common.structures.packages import PackagesConfigurationData, \
-    PackagesSelectionData
-from pyanaconda.modules.payloads.payload.payload_base_interface import PayloadBaseInterface
+from pyanaconda.modules.payloads.payload.payload_base_interface import (
+    PayloadBaseInterface,
+)
 
 __all__ = ["DNFInterface"]
 
@@ -226,3 +233,11 @@ class DNFInterface(PayloadBaseInterface):
         return RepoConfigurationData.to_structure_list(
             self.implementation.get_repo_configurations()
         )
+
+    def MatchAvailablePackages(self, pattern: Str) -> List[Str]:
+        """Find available packages that match the specified pattern.
+
+        :param pattern: a pattern for package names
+        :return: a list of matched package names
+        """
+        return self.implementation.match_available_packages(pattern)

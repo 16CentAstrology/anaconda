@@ -17,18 +17,17 @@
 # Red Hat, Inc.
 #
 
-from pyanaconda.flags import flags
-from pyanaconda.core.i18n import _, C_
-from pyanaconda.product import distributionText
 from pyanaconda import lifecycle
+from pyanaconda.anaconda_loggers import get_module_logger
+from pyanaconda.core.i18n import C_, _
 from pyanaconda.core.timer import Timer
-
+from pyanaconda.flags import flags
 from pyanaconda.ui import common
 from pyanaconda.ui.gui import GUIObject
 from pyanaconda.ui.gui.helpers import autoinstall_stopped
-from pyanaconda.ui.gui.utils import gtk_call_once, escape_markup
+from pyanaconda.ui.gui.utils import escape_markup, gtk_call_once
+from pyanaconda.ui.helpers import get_distribution_text
 
-from pyanaconda.anaconda_loggers import get_module_logger
 log = get_module_logger(__name__)
 
 
@@ -117,7 +116,7 @@ class Hub(GUIObject, common.Hub):
         gi.require_version("Gtk", "3.0")
         gi.require_version("AnacondaWidgets", "3.4")
 
-        from gi.repository import Gtk, AnacondaWidgets
+        from gi.repository import AnacondaWidgets, Gtk
 
         cats_and_spokes = self._collectCategoriesAndSpokes()
         categories = cats_and_spokes.keys()
@@ -142,7 +141,7 @@ class Hub(GUIObject, common.Hub):
                 # From here on, this Spoke will always exist.
                 spoke = spokeClass(self.data, self.storage, self.payload)
                 spoke.window.set_beta(self.window.get_beta())
-                spoke.window.set_property("distribution", distributionText())
+                spoke.window.set_property("distribution", get_distribution_text())
 
                 # If a spoke is not showable, it is unreachable in the UI.  We
                 # might as well get rid of it.
@@ -285,8 +284,9 @@ class Hub(GUIObject, common.Hub):
         self.window.set_may_continue(self.continuePossible)
 
     def _update_spokes(self):
-        from pyanaconda.ui.communication import hubQ
         import queue
+
+        from pyanaconda.ui.communication import hubQ
 
         q = hubQ.q
 

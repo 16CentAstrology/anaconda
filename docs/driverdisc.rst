@@ -56,6 +56,15 @@ Anaconda automatically looks for driverdiscs during startup.
 The DriverDisc has to be on partition or filesystem which has been labeled
 with 'OEMDRV' label.
 
+Because disks can take some time to appear, an additional delay of 5 seconds
+has been added.  This can be overridden by boot argument
+`inst.wait_for_disks=<value>` to let dracut wait up to <value> additional
+seconds (0 turns the feature off, causing dracut to only wait up to 500ms).
+Alternatively, if the `OEMDRV` device is known to be present but too slow to be
+autodetected, the user can boot with an argument like `inst.dd=hd:LABEL=OEMDRV`
+to indicate that dracut should expect an `OEMDRV` device and not start the
+installer until it appears.
+
 
 DDv3 structure
 --------------
@@ -100,8 +109,9 @@ to respect some rules.
 Firmware and module update
 --------------------------
 
-The firmware files together with all .ko files from the RPMs are exploded to
-special module location, which has preference over built-in Anaconda modules.
+The firmware files together with all .ko, .ko.bz2, .ko.gz, .ko.xz and .ko.zst
+files from the RPMs are exploded to special module location, which has
+preference over built-in Anaconda modules.
 
 Anaconda doesn't use built-in modules (except some storage modules needed for
 the DD to function properly) during the DriverDisc mode, so even in case when

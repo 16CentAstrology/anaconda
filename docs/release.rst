@@ -72,6 +72,19 @@ if you already have a distgit checkout, you can do just:
       git pull
       fedpkg build
 
+If this update contains non backwards compatible changes that might break another package, ex
+`anaconda-webui` you need to follow the procedure below
+
+::
+
+      fedpkg switch-branch rawhide
+      git pull
+      fedpkg request-side-tag
+      fedpkg build --target=${SIDE_TAG}
+
+This process is documented in more detail in the
+[Fedora Packaging Guidelines](https://docs.fedoraproject.org/en-US/package-maintainers/Package_Update_Guide/#multiple_packages)
+
 11. this should start the package build in koji - wait for it to succeed or debug any failures
 
 Using the manual ``rpmbuild`` path
@@ -230,10 +243,10 @@ This might be both "regular" changes merged and released outside of a freeze per
 and release blocker fixes.
 
 
-Create new localization branch for Anaconda
--------------------------------------------
+Create new localization directory for Anaconda
+----------------------------------------------
 
-First thing which needs to be done before branching in Anaconda is to create a new localization branch which will be used by the new Anaconda branch.
+First thing which needs to be done before branching in Anaconda is to create a new localization directory which will be used by the new Anaconda branch.
 
 Start by cloning translation repository (ideally outside of Anaconda git) and enter this repository:
 
@@ -246,13 +259,13 @@ Create a new localization directory from ``master`` directory:
 
 ::
 
-   cp -r master fedora-<version>
+   cp -r master f<version>
 
 Add the new folder to git:
 
 ::
 
-   git add fedora-<version>
+   git add f<version>
 
 Commit these changes:
 
@@ -267,25 +280,50 @@ Push new localization directory. This will be automatically discovered and added
 
    git push origin
 
+
+Adjust localization update automation
+-------------------------------------
+
+In the ``anaconda-l10n`` repository, the update automation needs to work on the new directory.
+
+Edit the file ``.github/workflows/pot-file-update.yaml``:
+
+::
+
+   vim .github/workflows/pot-file-update.yaml
+
+Update the matrix. For example, for f39 we had:
+
+::
+
+      matrix:
+        branch: [ master, f39, rhel-9 ]
+        include:
+          (...)
+          - branch: f39
+            anaconda-branch: fedora-39
+            container-tag: fedora-39
+
+Commit these changes:
+
+::
+
+   git commit -m "infra: Adjust pot updates for Fedora <version>"
+
+Push the changes:
+
+::
+
+   git push origin
+
+
 Enable Cockpit CI for the new branch
 -------------------------------------------
 
 Anaconda is using the Cockpit CI infrastructure to run Web UI test. Cockpit CI tests are triggered
-automatically for all `listed <https://github.com/cockpit-project/bots/blob/main/lib/testmap.py>`_ projects and per-project branches. To enable Cockpit CI in automatic mode for the new Fedora branch, our new fedora-<version> upstream branch needs to be added under the 'rhinstaller/anaconda' key in the file. The end result could look like this:
+automatically for all `listed <https://github.com/cockpit-project/bots/blob/main/lib/testmap.py>`_ projects and per-project branches. To enable Cockpit CI in automatic mode for the new Fedora branch, our new fedora-<version> upstream branch needs to be added under the 'rhinstaller/anaconda' key in the file. See the previous PR (for F39) to see how this is to be done:
 
-::
-    'rhinstaller/anaconda': {
-        'master': [
-            'fedora-35/rawhide',
-        ],
-        'fedora-38': [
-            'fedora-38',
-        ],
-        '_manual': [
-        ]
-    },
-
-Just fork the repo `cockpit-project repo <https://github.com/cockpit-project/bots>`_ and submit the change to ``lib/testmap.py`` as a PR. In case something is not clear (such as what are the valid target strings - fedora-35/rawhide, fedora-36, etc.) reach out to the #cockpit IRC channel on libera.chat.
+https://github.com/cockpit-project/bots/pull/5176
 
 How to branch Anaconda
 ----------------------
@@ -315,6 +353,12 @@ Then rebuild everything that is templatized:
     make -f Makefile.am reload-infra
 
 This should set up infrastructure and some other parts like makefile variables and pykickstart version used.
+
+Lastly it is necessary to set up updated l10n commit hash - check the commit hash of the ``anaconda-l10n`` repo,
+the one where the new f<version> folder has been added and put the hash to the ``GIT_L10N_SHA`` variable in the
+``po/l10n-config.mk`` file.
+
+This is necessary for the Web UI related translation pinning to work & l10n branching checks to pass.
 
 Verify the changes and commit:
 
@@ -359,6 +403,19 @@ Expect changes only in Github workflows that generate containers etc. for multip
 
     make -f Makefile.am reload-infra
     git commit -a -m "infra: Configure for the new fedora-NN branch"
+
+Then, finally, push the updated master branch:
+
+::
+
+    git push origin master
+
+Container rebuilds after branching
+----------------------------------
+
+Container rebuilds currently do not happen automatically after branching. So do not forget to rebuild
+all relevant containers after Fedora branching.
+
 
 How to add release version for next Fedora
 ------------------------------------------
@@ -423,3 +480,47 @@ If everything looks fine (changelog, new major version & the tag) push the chang
     git push origin master --tags
 
 Then continue with the normal Rawhide Anaconda build process.
+
+
+How to use a new Python version
+-------------------------------
+
+Fedora changes Python version from time to time.
+
+The only place where Python is explicitly listed in Anaconda code base and needs changing is in
+``scripts/makeupdates``::
+
+    # The Python site-packages path for pyanaconda.
+    SITE_PACKAGES_PATH = "./usr/lib64/python3.12/site-packages/"
+
+If this path is not correct, updates images "mysteriously stop working".
+
+Unfortunately, Python release timing is not well aligned with Fedora, so Rawhide mostly gets
+a Python release candidate (rc). This affects two things:
+
+- Usually, the stability of the interpreter is good, but there are deprecations and removals in the
+  standard library.
+
+- Pylint often does not handle unreleased Python, because it touches private interpreter
+  and library internals. The only recourse is often to disable it and wait for the official Python
+  release. Fortunately, ruff handles linting too.
+
+
+How to collect release notes after branched GA release
+------------------------------------------------------
+
+Release notes are collected in ``docs/release-notes/*.rst``. When a major Fedora version goes GA,
+these should be collected into the file ``docs/release-notes.rst``. To do so:
+
+0. Work on the master branch. Edit the file. New content is added on top.
+1. Create a heading for new Fedora version and subheadings for the broader areas. The previous
+   entry can provide some guidance.
+2. Copy the individual release notes contents into the document according to the headings, and edit
+   the contents to use the same form as in the document. Don't spend too much time on formatting,
+   just make sure it renders correctly.
+3. Delete the individual release note files.
+4. If you know there are some other major features missing, add them to the document too.
+5. Commit and make a PR.
+
+The branch used for the release is not touched. This might be surprising, but docs are always used
+from the ``master`` branch.

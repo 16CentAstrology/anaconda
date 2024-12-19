@@ -17,15 +17,16 @@
 # License and may only be used or replicated with the express permission of
 # Red Hat, Inc.
 #
-from dasbus.server.interface import dbus_interface, dbus_class
-from dasbus.typing import *  # pylint: disable=wildcard-import
+from dasbus.server.interface import dbus_class, dbus_interface
 from dasbus.server.property import emits_properties_changed
+from dasbus.typing import *  # pylint: disable=wildcard-import
+
 from pyanaconda.modules.common.base import KickstartModuleInterfaceTemplate
 from pyanaconda.modules.common.constants.objects import ISCSI
 from pyanaconda.modules.common.containers import TaskContainer
-from pyanaconda.modules.storage.constants import IscsiInterfacesMode
-from pyanaconda.modules.common.structures.iscsi import Portal, Credentials, Node
+from pyanaconda.modules.common.structures.iscsi import Credentials, Node, Portal
 from pyanaconda.modules.common.task import TaskInterface
+from pyanaconda.modules.storage.constants import IscsiInterfacesMode
 
 
 @dbus_class
@@ -71,11 +72,7 @@ class ISCSIInterface(KickstartModuleInterfaceTemplate):
     def CanSetInitiator(self) -> Bool:
         """Can the iSCSI initator be set?
 
-        Once the initiator name is set it can't be changed.
-        FIXME
-        Investigate if it needs to be so strict? Perhaps it has to be frozen only
-        once there are active nodes logged in, or once any nodes were discovered.
-        This would need to be changed in blivet/iscsi.py.
+        Initiator name can be changed when no sessions are active.
         """
         return self.implementation.can_set_initiator()
 

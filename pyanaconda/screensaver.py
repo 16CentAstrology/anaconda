@@ -47,10 +47,13 @@ Altogether this means that once the proxy is correctly created, we call Inhibit,
 the proxy object must exist as long as we want the inhibition to be in effect.
 """
 import os
+
 from dasbus.connection import SessionMessageBus
 from dasbus.error import DBusError
 from dasbus.identifier import DBusServiceIdentifier
+
 from pyanaconda.anaconda_loggers import get_module_logger
+
 log = get_module_logger(__name__)
 
 __all__ = ["inhibit_screensaver", "uninhibit_screensaver"]
@@ -60,22 +63,22 @@ session_proxy = None
 inhibit_id = None
 
 
-class SetEuidFromConsolehelper():
+class SetEuidFromPkexec():
     """Context manager to temporarily set euid from env. variable set by consolehelper.
 
-    Live installs use consolehelper to run as root, which sets the original UID in $USERHELPER_UID.
+    Live installs use pkexec to run as root, which sets the original UID in $PKEXEC_UID.
     """
     def __init__(self):
         self.old_euid = None
 
     def __enter__(self):
-        if "USERHELPER_UID" in os.environ:
+        if "PKEXEC_UID" in os.environ:
             self.old_euid = os.geteuid()
-            new_euid = int(os.environ["USERHELPER_UID"])
+            new_euid = int(os.environ["PKEXEC_UID"])
             os.seteuid(new_euid)
         return self
 
-    def __exit__(self, exc_type, exc_value, exc_traceback):
+    def __exit__(self, _exc_type, _exc_value, _exc_traceback):
         if self.old_euid is not None:
             os.seteuid(self.old_euid)
             self.old_euid = None
@@ -87,7 +90,7 @@ def inhibit_screensaver():
     global session_proxy
     global inhibit_id
     try:
-        with SetEuidFromConsolehelper():
+        with SetEuidFromPkexec():
             SCREENSAVER = DBusServiceIdentifier(
                 namespace=("org", "freedesktop", "ScreenSaver"),
                 message_bus=SessionMessageBus()
@@ -104,7 +107,7 @@ def uninhibit_screensaver():
         return
     log.info("Un-inhibiting screensaver.")
     try:
-        with SetEuidFromConsolehelper():
+        with SetEuidFromPkexec():
             session_proxy.UnInhibit(inhibit_id)
     except (DBusError, KeyError) as e:
         log.warning("Unable to uninhibit the screensaver: %s", e)

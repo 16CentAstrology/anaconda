@@ -20,6 +20,7 @@
 from dasbus.server.interface import dbus_interface
 from dasbus.server.property import emits_properties_changed
 from dasbus.typing import *  # pylint: disable=wildcard-import
+
 from pyanaconda.modules.common.base import KickstartModuleInterfaceTemplate
 from pyanaconda.modules.common.constants.objects import DISK_SELECTION
 from pyanaconda.modules.common.structures.validation import ValidationReport
@@ -51,14 +52,14 @@ class DiskSelectionInterface(KickstartModuleInterfaceTemplate):
         Specifies those disks that anaconda can use for
         partitioning, formatting, and clearing.
 
-        :param drives: a list of drives names
+        :param drives: a list of drives IDs
         """
         self.implementation.set_selected_disks(drives)
 
     def ValidateSelectedDisks(self, drives: List[Str]) -> Structure:
         """Validate the list of selected disks.
 
-        :param drives: a list of drives names
+        :param drives: a list of drives IDs
         :return: a validation report
         """
         return ValidationReport.to_structure(
@@ -81,7 +82,7 @@ class DiskSelectionInterface(KickstartModuleInterfaceTemplate):
 
         It can be set from the kickstart with 'ignoredisk --onlyuse'.
 
-        :param drives: a list of drives names
+        :param drives: a list of drives IDs
         """
         self.implementation.set_exclusive_disks(drives)
 
@@ -98,7 +99,7 @@ class DiskSelectionInterface(KickstartModuleInterfaceTemplate):
         Specifies those disks that anaconda should not touch
         when it does partitioning, formatting, and clearing.
 
-        :param drives: a list of drive names
+        :param drives: a list of drive IDs
         """
         self.implementation.set_ignored_disks(drives)
 
@@ -114,7 +115,7 @@ class DiskSelectionInterface(KickstartModuleInterfaceTemplate):
 
         Specifies those disks that anaconda should protect.
 
-        :param devices: a list of device names
+        :param devices: a list of device IDs
         """
         self.implementation.set_protected_devices(devices)
 
@@ -135,6 +136,6 @@ class DiskSelectionInterface(KickstartModuleInterfaceTemplate):
     def GetUsableDisks(self) -> List[Str]:
         """Get a list of disks that can be used for the installation.
 
-        :return: a list of disk names
+        :return: a list of disk IDs
         """
         return self.implementation.get_usable_disks()

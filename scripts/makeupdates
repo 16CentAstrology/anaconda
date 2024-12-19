@@ -32,11 +32,11 @@ RPM_FOLDER_NAME = os.path.expanduser("~/.anaconda_updates_rpm_cache")
 RPM_RELEASE_DIR_TEMPLATE = "for_%s"
 
 # The Python site-packages path for pyanaconda.
-SITE_PACKAGES_PATH = "./usr/lib64/python3.11/site-packages/"
-COCKPIT_PACKAGES_PATH = "./usr/share/cockpit/anaconda-webui/"
+SITE_PACKAGES_PATH = "./usr/lib64/python3.13/site-packages/"
 
 # Anaconda scripts that should be installed into the libexec folder
-LIBEXEC_SCRIPTS = ["log-capture", "start-module", "apply-updates"]
+LIBEXEC_SCRIPTS = ["log-capture", "start-module", "apply-updates", "anaconda-pre-log-gen",
+                   "run-in-new-session"]
 
 # Anaconda scripts that should be installed into /usr/bin
 USR_BIN_SCRIPTS = ["anaconda-disable-nm-ibft-plugin", "anaconda-nm-disable-autocons"]
@@ -57,9 +57,7 @@ def get_archive_tag(configure, spec):
         for line in f:
             if line.startswith('Release:'):
                 release = '-' + line.split()[1].split('%')[0]
-                if "@PACKAGE_RELEASE@" in release:
-                    tag += "-1"
-                else:
+                if "@PACKAGE_RELEASE@" not in release:
                     tag += release
             else:
                 continue
@@ -182,10 +180,6 @@ def copy_updated_files(tag, updates, cwd, builddir):
         finally:
             shutil.rmtree(tmpdir)
 
-    # Copy the Web UI support.
-    if os.path.exists('ui/webui/dist'):
-        install_to_dir("ui/webui/dist", "usr/share/cockpit/anaconda-webui")
-
     try:
         lines = do_git_diff(tag)
     except RuntimeError as e:
@@ -263,7 +257,7 @@ def copy_updated_files(tag, updates, cwd, builddir):
         elif gitfile.startswith("data/profile.d"):
             install_to_dir(gitfile, "etc/anaconda/profile.d")
         elif gitfile == "data/liveinst/liveinst":
-            install_to_dir(gitfile, "usr/sbin")
+            install_to_dir(gitfile, "usr/bin")
         elif gitfile.startswith("data/liveinst/gnome"):
             install_to_dir(gitfile, "usr/share/anaconda/gnome")
         elif gitfile.startswith("data/pixmaps"):
@@ -276,7 +270,7 @@ def copy_updated_files(tag, updates, cwd, builddir):
             install_gschema()
         elif gitfile.startswith("data/post-scripts/"):
             install_to_dir(gitfile, "usr/share/anaconda/post-scripts")
-        elif gitfile == "utils/handle-sshpw":
+        elif gitfile == "scripts/handle-sshpw":
             install_to_dir(gitfile, "usr/sbin")
         elif any(gitfile.endswith(libexec_script) for libexec_script in LIBEXEC_SCRIPTS):
             install_to_dir(gitfile, "usr/libexec/anaconda")
@@ -331,6 +325,15 @@ def check_autotools(srcdir, builddir):
         os.chdir(builddir)
         os.system(os.path.join(srcdir, 'configure') + ' --prefix=`rpm --eval %_prefix`')
         os.chdir(srcdir)
+
+def generate_dbus_code(srcdir):
+    os.system('gdbus-codegen '
+              '--interface-prefix org.fedoraproject.Anaconda.Modules. '
+              '--c-namespace An '
+              '--generate-c-code an-localization '
+              '--output-directory %s/widgets/src '
+              '%s/widgets/src/dbus/org.fedoraproject.Anaconda.Modules.Localization.xml'
+              % (srcdir, srcdir))
 
 def copy_updated_widgets(updates, srcdir, builddir):
     os.chdir(srcdir)
@@ -488,6 +491,7 @@ def main():
     copy_updated_files(args.tag, updates, cwd, builddir)
 
     if args.compile:
+        generate_dbus_code(cwd)
         if widgets_changed(args.tag):
             copy_updated_widgets(updates, cwd, builddir)
 

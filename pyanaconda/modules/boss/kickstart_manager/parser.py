@@ -16,13 +16,15 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 
-__all__ = ["SplitKickstartParser", "VALID_SECTIONS_ANACONDA"]
+__all__ = ["VALID_SECTIONS_ANACONDA", "SplitKickstartParser"]
 
 from pykickstart.parser import KickstartParser
 from pykickstart.sections import Section
 
-from pyanaconda.modules.boss.kickstart_manager.element import KickstartElement,\
-    TrackedKickstartElements
+from pyanaconda.modules.boss.kickstart_manager.element import (
+    KickstartElement,
+    TrackedKickstartElements,
+)
 
 VALID_SECTIONS_ANACONDA = [
     "%pre", "%pre-install", "%post", "%onerror", "%traceback", "%packages", "%addon"
@@ -61,7 +63,7 @@ class StoreSection(Section):
         """
         super().__init__(*args, **kwargs)
         self.sectionOpen = kwargs.get("sectionOpen")
-        self._store = kwargs.get("store", None)
+        self._store = kwargs.get("store")
         self.header_lineno = 0
         self.args = []
         self.lines = []

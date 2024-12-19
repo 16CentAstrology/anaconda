@@ -18,24 +18,24 @@
 # Red Hat, Inc.
 #
 from pyanaconda.anaconda_loggers import get_module_logger
-from pyanaconda.core.signal import Signal
 from pyanaconda.core.dbus import DBus
-from pyanaconda.modules.common.base import KickstartBaseModule
+from pyanaconda.core.signal import Signal
 from pyanaconda.modules.common.constants.objects import DISK_SELECTION
-from pyanaconda.modules.common.errors.storage import UnavailableStorageError
 from pyanaconda.modules.common.structures.validation import ValidationReport
-from pyanaconda.modules.storage.disk_selection.selection_interface import DiskSelectionInterface
+from pyanaconda.modules.storage.disk_selection.selection_interface import (
+    DiskSelectionInterface,
+)
 from pyanaconda.modules.storage.disk_selection.utils import check_disk_selection
+from pyanaconda.modules.storage.storage_subscriber import StorageSubscriberModule
 
 log = get_module_logger(__name__)
 
 
-class DiskSelectionModule(KickstartBaseModule):
+class DiskSelectionModule(StorageSubscriberModule):
     """The disk selection module."""
 
     def __init__(self):
         super().__init__()
-        self._storage = None
 
         self.selected_disks_changed = Signal()
         self._selected_disks = []
@@ -51,21 +51,6 @@ class DiskSelectionModule(KickstartBaseModule):
 
         self.disk_images_changed = Signal()
         self._disk_images = {}
-
-    @property
-    def storage(self):
-        """The storage model.
-
-        :return: an instance of Blivet
-        """
-        if self._storage is None:
-            raise UnavailableStorageError()
-
-        return self._storage
-
-    def on_storage_changed(self, storage):
-        """Keep the instance of the current storage."""
-        self._storage = storage
 
     def publish(self):
         """Publish the module."""
@@ -93,7 +78,7 @@ class DiskSelectionModule(KickstartBaseModule):
         Specifies those disks that anaconda can use for
         partitioning, formatting, and clearing.
 
-        :param drives: a list of drives names
+        :param drives: a list of drives IDs
         """
         self._selected_disks = drives
         self.selected_disks_changed.emit(list(drives))
@@ -102,7 +87,7 @@ class DiskSelectionModule(KickstartBaseModule):
     def validate_selected_disks(self, drives):
         """Validate the list of selected disks.
 
-        :param drives: a list of drives names
+        :param drives: a list of drives IDs
         :return: a validation report
         """
         report = ValidationReport()
@@ -123,7 +108,7 @@ class DiskSelectionModule(KickstartBaseModule):
 
         It can be set from the kickstart with 'ignoredisk --onlyuse'.
 
-        :param drives: a list of drives names
+        :param drives: a list of drives IDs
         """
         self._exclusive_disks = drives
         self.exclusive_disks_changed.emit()
@@ -140,7 +125,7 @@ class DiskSelectionModule(KickstartBaseModule):
         Specifies those disks that anaconda should not touch
         when it does partitioning, formatting, and clearing.
 
-        :param drives: a list of drive names
+        :param drives: a list of drive IDs
         """
         self._ignored_disks = drives
         self.ignored_disks_changed.emit()
@@ -156,7 +141,7 @@ class DiskSelectionModule(KickstartBaseModule):
 
         Specifies those disks that anaconda should protect.
 
-        :param devices: a list of device names
+        :param devices: a list of device IDs
         """
         self._protected_devices = devices
         self.protected_devices_changed.emit(list(devices))
@@ -179,6 +164,6 @@ class DiskSelectionModule(KickstartBaseModule):
     def get_usable_disks(self):
         """Get a list of disks that can be used for the installation.
 
-        :return: a list of disk names
+        :return: a list of disk IDs
         """
-        return [disk.name for disk in self.storage.usable_disks]
+        return [disk.device_id for disk in self.storage.usable_disks]

@@ -21,15 +21,20 @@ import parted
 from blivet.devices import PartitionDevice
 
 from pyanaconda.anaconda_loggers import get_module_logger
-from pyanaconda.core.constants import CLEAR_PARTITIONS_DEFAULT, CLEAR_PARTITIONS_NONE, \
-    CLEAR_PARTITIONS_LINUX, CLEAR_PARTITIONS_ALL, CLEAR_PARTITIONS_LIST
+from pyanaconda.core.constants import (
+    CLEAR_PARTITIONS_ALL,
+    CLEAR_PARTITIONS_DEFAULT,
+    CLEAR_PARTITIONS_LINUX,
+    CLEAR_PARTITIONS_LIST,
+    CLEAR_PARTITIONS_NONE,
+)
 
 log = get_module_logger(__name__)
 
 _all__ = ["DiskInitializationConfig"]
 
 
-class DiskInitializationConfig(object):
+class DiskInitializationConfig:
     """Configuration of the disk initialization."""
 
     def __init__(self):
@@ -50,7 +55,7 @@ class DiskInitializationConfig(object):
         for disk in device.disks:
             # this will not include disks with hidden formats like multipath
             # and firmware raid member disks
-            if self.drives_to_clear and disk.name not in self.drives_to_clear:
+            if self.drives_to_clear and disk.device_id not in self.drives_to_clear:
                 return False
 
         if not self.clear_non_existent:
@@ -113,7 +118,7 @@ class DiskInitializationConfig(object):
             return False
 
         if self.initialization_mode == CLEAR_PARTITIONS_LIST and \
-           device.name not in self.devices_to_clear:
+           device.device_id not in self.devices_to_clear:
             return False
 
         return True

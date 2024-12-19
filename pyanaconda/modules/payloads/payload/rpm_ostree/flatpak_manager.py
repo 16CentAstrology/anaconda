@@ -19,19 +19,24 @@
 #
 import os
 import shutil
-import gi
-
 from abc import ABC, abstractmethod
 
+import gi
+
 from pyanaconda.anaconda_loggers import get_module_logger
+from pyanaconda.core.glib import Bytes, GError, Variant, VariantType
 from pyanaconda.core.i18n import _
-from pyanaconda.core.glib import GError, VariantType, Variant, Bytes
 from pyanaconda.modules.common.errors.installation import PayloadInstallationError
 
 gi.require_version("Flatpak", "1.0")
 gi.require_version("Gio", "2.0")
 
-from gi.repository.Flatpak import Transaction, Installation, Remote, TransactionOperationType
+from gi.repository.Flatpak import (
+    Installation,
+    Remote,
+    Transaction,
+    TransactionOperationType,
+)
 from gi.repository.Gio import File
 
 log = get_module_logger(__name__)
@@ -39,7 +44,7 @@ log = get_module_logger(__name__)
 __all__ = ["FlatpakManager"]
 
 
-class FlatpakManager(object):
+class FlatpakManager:
     """Main class to handle flatpak installation and management."""
 
     LOCAL_REMOTE_NAME = "Anaconda"
@@ -202,14 +207,14 @@ class FlatpakManager(object):
         self._log_operation(operation, "started")
         self._report_progress(_("Installing {}").format(operation.get_ref()))
 
-    def _operation_stopped_callback(self, transaction, operation, commit, result):
+    def _operation_stopped_callback(self, transaction, operation, _commit, result):
         """Existing operation ended.
 
         :param transaction: the main transaction object
         :type transaction: Flatpak.Transaction instance
         :param operation: object describing the operation
         :type operation: Flatpak.TransactionOperation instance
-        :param str commit: operation was committed this is a commit id
+        :param str _commit: operation was committed this is a commit id
         :param result: object containing details about the result of the operation
         :type result: Flatpak.TransactionResult instance
         """

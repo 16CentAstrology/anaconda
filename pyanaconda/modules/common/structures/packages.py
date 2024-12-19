@@ -20,10 +20,14 @@
 from dasbus.structure import DBusData
 from dasbus.typing import *  # pylint: disable=wildcard-import
 
-from pyanaconda.core.constants import MULTILIB_POLICY_BEST, RPM_LANGUAGES_ALL, \
-    DNF_DEFAULT_TIMEOUT, DNF_DEFAULT_RETRIES
+from pyanaconda.core.constants import (
+    DNF_DEFAULT_RETRIES,
+    DNF_DEFAULT_TIMEOUT,
+    MULTILIB_POLICY_BEST,
+    RPM_LANGUAGES_ALL,
+)
 
-__all__ = ["PackagesSelectionData", "PackagesConfigurationData"]
+__all__ = ["PackagesConfigurationData", "PackagesSelectionData"]
 
 
 class PackagesSelectionData(DBusData):
@@ -310,7 +314,7 @@ class PackagesConfigurationData(DBusData):
 
             all     Install all available packages with compatible
                     architectures.
-            best    Prefer packages which best match the system’s
+            best    Prefer packages which best match the system's
                     architecture.
 
         :return: 'all' or 'best'

@@ -18,21 +18,38 @@
 import copy
 import re
 
+from pyanaconda.anaconda_loggers import get_module_logger
+from pyanaconda.core.constants import NETWORK_CAPABILITY_TEAM
 from pyanaconda.core.regexes import NM_MAC_INITRAMFS_CONNECTION
 from pyanaconda.modules.common.task import Task
-from pyanaconda.anaconda_loggers import get_module_logger
-from pyanaconda.modules.network.network_interface import NetworkInitializationTaskInterface
-from pyanaconda.modules.network.nm_client import get_device_name_from_network_data, \
-    update_connection_from_ksdata, add_connection_from_ksdata, bound_hwaddr_of_device, \
-    update_connection_values, commit_changes_with_autoconnection_blocked, \
-    get_config_file_connection_of_device, clone_connection_sync, nm_client_in_thread
-from pyanaconda.modules.network.device_configuration import supported_wired_device_types, \
-    virtual_device_types
-from pyanaconda.modules.network.utils import guard_by_system_configuration
+from pyanaconda.modules.network.device_configuration import (
+    supported_wired_device_types,
+    virtual_device_types,
+)
+from pyanaconda.modules.network.network_interface import (
+    NetworkInitializationTaskInterface,
+)
+from pyanaconda.modules.network.nm_client import (
+    add_connection_from_ksdata,
+    bound_hwaddr_of_device,
+    clone_connection_sync,
+    commit_changes_with_autoconnection_blocked,
+    get_config_file_connection_of_device,
+    get_device_name_from_network_data,
+    is_bootif_connection,
+    nm_client_in_thread,
+    update_connection_from_ksdata,
+    update_connection_values,
+)
+from pyanaconda.modules.network.utils import (
+    guard_by_system_configuration,
+    is_nbft_device,
+)
 
 log = get_module_logger(__name__)
 
 import gi
+
 gi.require_version("NM", "1.0")
 from gi.repository import NM
 
@@ -40,13 +57,16 @@ from gi.repository import NM
 class ApplyKickstartTask(Task):
     """Task for application of kickstart network configuration."""
 
-    def __init__(self, network_data, supported_devices, bootif, ifname_option_values):
+    def __init__(self, network_data, supported_devices, capabilities,
+                 bootif, ifname_option_values):
         """Create a new task.
 
         :param network_data: kickstart network data to be applied
         :type: list(NetworkData)
         :param supported_devices: list of names of supported network devices
         :type supported_devices: list(str)
+        :param capabilities: list of capabilities supported by the network backend
+        :type capabilities: list(int)
         :param bootif: MAC addres of device to be used for --device=bootif specification
         :type bootif: str
         :param ifname_option_values: list of ifname boot option values
@@ -55,6 +75,7 @@ class ApplyKickstartTask(Task):
         super().__init__()
         self._network_data = network_data
         self._supported_devices = supported_devices
+        self._capabilities = capabilities
         self._bootif = bootif
         self._ifname_option_values = ifname_option_values
 
@@ -93,12 +114,20 @@ class ApplyKickstartTask(Task):
                 log.info("%s: Wireless devices configuration is not supported.", self.name)
                 continue
 
+            if network_data.teamslaves and NETWORK_CAPABILITY_TEAM not in self._capabilities:
+                log.info("%s: Team devices configuration is not supported.", self.name)
+                continue
+
             device_name = get_device_name_from_network_data(nm_client,
                                                             network_data,
                                                             self._supported_devices,
                                                             self._bootif)
             if not device_name:
                 log.warning("%s: --device %s not found", self.name, network_data.device)
+                continue
+
+            if is_nbft_device(device_name):
+                log.debug("Ignoring nBFT device %s", device_name)
                 continue
 
             applied_devices.append(device_name)
@@ -173,14 +202,14 @@ class DumpMissingConfigFilesTask(Task):
         if ac:
             con = ac.get_connection()
             if con.get_interface_name() == iface and con in cons:
-                if allow_ports or not con.get_setting_connection().get_master():
+                if allow_ports or not con.get_setting_connection().get_controller():
                     return con
             else:
                 log.debug("%s: active connection for %s can't be used as persistent",
                           self.name, iface)
         for con in cons:
             if con.get_interface_name() == iface:
-                if allow_ports or not con.get_setting_connection().get_master():
+                if allow_ports or not con.get_setting_connection().get_controller():
                     return con
         return None
 
@@ -230,86 +259,105 @@ class DumpMissingConfigFilesTask(Task):
                 continue
 
             iface = device.get_iface()
+
+            if is_nbft_device(iface or ""):
+                log.debug("Ignoring nBFT device %s", iface)
+                continue
+
             if get_config_file_connection_of_device(nm_client, iface):
                 continue
 
-            cons = device.get_available_connections()
+            available_cons = device.get_available_connections()
             log.debug("%s: %s connections found for device %s", self.name,
-                      [con.get_uuid() for con in cons], iface)
-            n_cons = len(cons)
-            con = None
+                      [con.get_uuid() for con in available_cons], iface)
+            initramfs_cons = [con for con in available_cons
+                              if self._is_initramfs_connection(con, iface)]
+            log.debug("%s: %s initramfs connections found for device %s", self.name,
+                      [con.get_uuid() for con in initramfs_cons], iface)
 
-            device_is_port = any(con.get_setting_connection().get_master() for con in cons)
+            dumped_con = None
+
+            device_is_port = any(con.get_setting_connection().get_controller()
+                                 for con in available_cons)
             if device_is_port:
                 # We have to dump persistent ifcfg files for ports created in initramfs
-                if n_cons == 1 and self._is_initramfs_connection(cons[0], iface):
-                    log.debug("%s: device %s has an initramfs port connection",
-                              self.name, iface)
-                    con = self._select_persistent_connection_for_device(
-                        device, cons, allow_ports=True)
+                # Filter out potenital connection created for BOOTIF option rhbz#2175664
+                port_cons = [c for c in available_cons if not is_bootif_connection(c)]
+                if initramfs_cons:
+                    if len(port_cons) == 1:
+                        log.debug("%s: port device %s has an initramfs port connection",
+                                  self.name, iface)
+                        dumped_con = self._select_persistent_connection_for_device(
+                            device, port_cons, allow_ports=True)
+                    else:
+                        log.debug("%s: port device %s has an initramfs connection",
+                                  self.name, iface)
                 else:
-                    log.debug("%s: creating default connection for port device %s",
+                    log.debug("%s: not creating default connection for port device %s",
                               self.name, iface)
+                    continue
 
-            if not con:
-                con = self._select_persistent_connection_for_device(device, cons)
+            if not dumped_con:
+                dumped_con = self._select_persistent_connection_for_device(device, available_cons)
 
-            has_initramfs_con = any(self._is_initramfs_connection(con, iface) for con in cons)
-            if has_initramfs_con:
-                log.debug("%s: device %s has initramfs connection", self.name, iface)
-                if not con and n_cons == 1:
-                    # Try to clone the persistent connection for the device
-                    # from the connection which should be a generic (not bound
-                    # to iface) connection created by NM in initramfs
-                    con = clone_connection_sync(nm_client, cons[0], con_id=iface)
+            if not dumped_con and len(initramfs_cons) == 1:
+                # Try to clone the persistent connection for the device
+                # from the connection which should be a generic (not bound
+                # to iface) connection created by NM in initramfs
+                dumped_con = clone_connection_sync(nm_client, initramfs_cons[0], con_id=iface)
 
-            if con:
-                self._update_connection(nm_client, con, iface)
-                # Update some values of connection generated in initramfs so it
-                # can be used as persistent configuration.
-                if has_initramfs_con:
-                    update_connection_values(
-                        con,
-                        [
-                            # Make sure ONBOOT is yes
-                            (NM.SETTING_CONNECTION_SETTING_NAME,
-                             NM.SETTING_CONNECTION_AUTOCONNECT,
-                             True),
-                            # Update cloned generic connection from initramfs
-                            (NM.SETTING_CONNECTION_SETTING_NAME,
-                             NM.SETTING_CONNECTION_MULTI_CONNECT,
-                             0),
-                            # Update cloned generic connection from initramfs
-                            (NM.SETTING_CONNECTION_SETTING_NAME,
-                             NM.SETTING_CONNECTION_WAIT_DEVICE_TIMEOUT,
-                             -1)
-                        ]
-                    )
+            if dumped_con:
                 log.debug("%s: dumping connection %s to config file for %s",
-                          self.name, con.get_uuid(), iface)
-                commit_changes_with_autoconnection_blocked(con, nm_client)
+                          self.name, dumped_con.get_uuid(), iface)
+                self._dump_connection(nm_client, dumped_con, iface, bool(initramfs_cons))
             else:
                 log.debug("%s: none of the connections can be dumped as persistent",
                           self.name)
-                if n_cons > 1 and not device_is_port:
+                if len(available_cons) > 1 and not device_is_port:
                     log.warning("%s: unexpected number of connections, not dumping any",
                                 self.name)
                     continue
                 log.debug("%s: creating default connection for %s", self.name, iface)
-                network_data = copy.deepcopy(self._default_network_data)
-                if has_initramfs_con:
-                    network_data.onboot = True
-                add_connection_from_ksdata(
-                    nm_client,
-                    network_data,
-                    iface,
-                    activate=False,
-                    ifname_option_values=self._ifname_option_values
-                )
+                self._create_default_connection(nm_client, iface, bool(initramfs_cons))
 
             new_configs.append(iface)
 
         return new_configs
+
+    def _dump_connection(self, nm_client, dumped_con, iface, initramfs_con):
+        self._update_connection(nm_client, dumped_con, iface)
+        # Update some values of connection generated in initramfs so it
+        # can be used as persistent configuration.
+        if initramfs_con:
+            update_connection_values(
+                dumped_con,
+                [
+                    # Make sure ONBOOT is yes
+                    (NM.SETTING_CONNECTION_SETTING_NAME,
+                     NM.SETTING_CONNECTION_AUTOCONNECT,
+                     True),
+                    # Update cloned generic connection from initramfs
+                    (NM.SETTING_CONNECTION_SETTING_NAME,
+                     NM.SETTING_CONNECTION_MULTI_CONNECT,
+                     0),
+                    # Update cloned generic connection from initramfs
+                    (NM.SETTING_CONNECTION_SETTING_NAME,
+                     NM.SETTING_CONNECTION_WAIT_DEVICE_TIMEOUT,
+                     -1)
+                ]
+            )
+        commit_changes_with_autoconnection_blocked(dumped_con, nm_client)
+
+    def _create_default_connection(self, nm_client, iface, initramfs_con):
+        network_data = copy.deepcopy(self._default_network_data)
+        network_data.onboot = initramfs_con
+        add_connection_from_ksdata(
+            nm_client,
+            network_data,
+            iface,
+            activate=False,
+            ifname_option_values=self._ifname_option_values
+        )
 
     def _is_initramfs_connection(self, con, iface):
         con_id = con.get_id()

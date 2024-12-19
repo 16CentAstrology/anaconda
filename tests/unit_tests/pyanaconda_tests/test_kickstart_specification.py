@@ -18,29 +18,33 @@
 # Red Hat Author(s): Vendula Poncova <vponcova@redhat.com>
 #
 import unittest
-import pytest
 import warnings
-
 from textwrap import dedent
 
+import pytest
 from pykickstart.base import RemovedCommand
-from pykickstart.errors import KickstartParseError
 from pykickstart.commands.skipx import FC3_SkipX
-from pykickstart.commands.user import F24_User, F19_UserData
+from pykickstart.commands.user import F19_UserData, F24_User
+from pykickstart.errors import KickstartParseError
 from pykickstart.options import KSOptionParser
 from pykickstart.parser import Packages
 from pykickstart.sections import PackageSection
-from pykickstart.version import F30, isRHEL as is_rhel
+from pykickstart.version import F30
+from pykickstart.version import isRHEL as is_rhel
 
 from pyanaconda import kickstart
 from pyanaconda.core.kickstart.addon import AddonData, AddonRegistry
+from pyanaconda.core.kickstart.specification import (
+    KickstartSpecification,
+    KickstartSpecificationHandler,
+    KickstartSpecificationParser,
+)
 from pyanaconda.core.kickstart.version import VERSION
-from pyanaconda.core.kickstart.specification import KickstartSpecification,\
-    KickstartSpecificationHandler, KickstartSpecificationParser
 from pyanaconda.kickstart import AnacondaKickstartSpecification
 from pyanaconda.modules.localization.kickstart import LocalizationKickstartSpecification
 from pyanaconda.modules.network.kickstart import NetworkKickstartSpecification
 from pyanaconda.modules.payloads.kickstart import PayloadKickstartSpecification
+from pyanaconda.modules.runtime.kickstart import RuntimeKickstartSpecification
 from pyanaconda.modules.security.kickstart import SecurityKickstartSpecification
 from pyanaconda.modules.services.kickstart import ServicesKickstartSpecification
 from pyanaconda.modules.storage.kickstart import StorageKickstartSpecification
@@ -402,6 +406,7 @@ class ModuleSpecificationsTestCase(unittest.TestCase):
         SubscriptionKickstartSpecification,
         TimezoneKickstartSpecification,
         UsersKickstartSpecification,
+        RuntimeKickstartSpecification,
     ]
 
     # Names of the kickstart commands and data that should be temporarily ignored.
@@ -457,7 +462,10 @@ class ModuleSpecificationsTestCase(unittest.TestCase):
         specified = set()
 
         for specification in self.SPECIFICATIONS:
-            specified.update(specification.commands.keys())
+            spec_commands = specification.commands.items()
+            specified.update(
+                name for name, obj in spec_commands if not issubclass(obj, RemovedCommand)
+            )
 
         # Collect the expected commands.
         expected = set()
@@ -485,7 +493,7 @@ class ModuleSpecificationsTestCase(unittest.TestCase):
         for specification in self.SPECIFICATIONS:
             print("Checking specification {}...".format(specification.__name__))
 
-            for name in specification.commands.keys():
+            for name in specification.commands:
                 if name in self.IGNORED_SHARED_NAMES:
                     warnings.warn("Skipping the shared name {}.".format(name))
                     continue
@@ -502,7 +510,7 @@ class ModuleSpecificationsTestCase(unittest.TestCase):
         for specification in self.SPECIFICATIONS:
             print("Checking specification {}...".format(specification.__name__))
 
-            for name in specification.commands_data.keys():
+            for name in specification.commands_data:
                 if name in specified:
                     self.fail("Data object {} is specified more then once!".format(name))
 
@@ -515,7 +523,7 @@ class ModuleSpecificationsTestCase(unittest.TestCase):
         for specification in self.SPECIFICATIONS:
             print("Checking specification {}...".format(specification.__name__))
 
-            for name in specification.sections.keys():
+            for name in specification.sections:
                 if name in specified:
                     self.fail("Section {} is specified more then once!".format(name))
 

@@ -17,18 +17,24 @@
 # License and may only be used or replicated with the express permission of
 # Red Hat, Inc.
 #
+import sys
 import time
 
 from dasbus.error import DBusError
-from pyanaconda.core.signal import Signal
-from pyanaconda.errors import errorHandler, ERROR_RAISE
-from pyanaconda.modules.common.task import sync_run_task
+
 from pyanaconda.anaconda_loggers import get_module_logger
+from pyanaconda.core import util
+from pyanaconda.core.constants import IPMI_ABORTED
+from pyanaconda.core.signal import Signal
+from pyanaconda.errors import ERROR_RAISE, errorHandler
+from pyanaconda.flags import flags
+from pyanaconda.modules.common.errors.runtime import ScriptError
+from pyanaconda.modules.common.task import sync_run_task
 
 log = get_module_logger(__name__)
 
 
-class BaseTask(object):
+class BaseTask:
     """A base class for Task and TaskQueue.
 
     It holds shared methods, properties and signals.
@@ -91,8 +97,9 @@ class TaskQueue(BaseTask):
     TaskQueues and Tasks can be mixed in a single TaskQueue.
     """
 
-    def __init__(self, name, status_message=None):
+    def __init__(self, name, status_message=None, task_category=None):
         super().__init__(name)
+        self._task_category = task_category
         self._status_message = status_message
         # the list backing this TaskQueue instance
         self._queue = []
@@ -102,6 +109,20 @@ class TaskQueue(BaseTask):
         # triggered when a task is started
         self.task_started = Signal()
         self.task_completed = Signal()
+
+    @property
+    def task_category(self):
+        """A category describing the Queue is trying to achieve.
+
+        Eq. "Converting all foo into bar."
+
+        The current main usecase is to set the ProgressHub status message when
+        a TaskQueue is started.
+
+        :returns: a task category
+        :rtype: str
+        """
+        return self._task_category
 
     @property
     def status_message(self):
@@ -228,7 +249,7 @@ class Task(BaseTask):
         super().__init__(task_name)
         self._task_cb = task_cb
         self._task_args = task_args or []
-        self._task_kwargs = task_kwargs or dict()
+        self._task_kwargs = task_kwargs or {}
 
     @property
     def summary(self):
@@ -280,8 +301,14 @@ class DBusTask(BaseTask):
             sync_run_task(self._task_proxy)
         except DBusError as e:
             # Handle a remote error.
-            if errorHandler.cb(e) == ERROR_RAISE:
-                raise
+            if isinstance(e, ScriptError):
+                flags.ksprompt = True
+                errorHandler.cb(e)
+                util.ipmi_report(IPMI_ABORTED)
+                sys.exit(0)
+            else:
+                if errorHandler.cb(e) == ERROR_RAISE:
+                    raise
         finally:
             # Disconnect from the signal.
             self._task_proxy.ProgressChanged.disconnect()

@@ -27,16 +27,23 @@ COPY ["anaconda.spec.in", "/root/"]
 
 # Prepare environment and install build dependencies
 RUN set -ex; \
+  # disable fedora-cisco repository otherwise freerdp will depend on openh264 from fedora-cisco
+  # if fedora-cisco is not enabled it will fallback to stub library in main repository which is
+  # what we want
+  sed -i 's/enabled=1/enabled=0/' /etc/yum.repos.d/fedora-cisco-openh264.repo; \
   dnf update -y; \
   # Install dependencies
   dnf install -y \
-  'dnf-command(copr)' \
-  npm \
+  'dnf5-command(copr)' \
   git \
   curl \
   python3-polib \
+  # Requirement for translation-canary which is started during RPM build
+  python3-pocketlint \
   /usr/bin/xargs \
-  rpm-build; \
+  rsync \
+  rpm-build \
+  rpmlint; \
   if ! grep -q VARIANT.*eln /etc/os-release; then \
     BRANCH="${git_branch}"; \
     if [ $BRANCH == "master" ]; then \
@@ -45,6 +52,7 @@ RUN set -ex; \
     BRANCH=${BRANCH#fedora-}; \
     dnf copr enable -y ${copr_repo} fedora-${BRANCH}-x86_64; \
     dnf copr enable -y @storage/blivet-daily fedora-${BRANCH}-x86_64; \
+    dnf copr enable -y @storage/udisks-daily fedora-${BRANCH}-x86_64; \
   else \
     dnf copr enable -y ${copr_repo} fedora-eln-x86_64; \
   fi; \

@@ -67,9 +67,10 @@ tests/*.trs
 tests/.coverage.*
 tests/pylint/.pylint.d
 tests/test-suite.log*
+updates/
 updates.img
-utils/dd/dd_extract
-utils/dd/dd_list
+dracut/dd/dd_extract
+dracut/dd/dd_list
 widgets/doc/AnacondaWidgets-*.txt
 widgets/doc/AnacondaWidgets.*
 widgets/doc/*.stamp
@@ -78,6 +79,7 @@ widgets/doc/xml
 widgets/gtk-doc.make
 widgets/src/gettext.h
 widgets/src/resources.*
+widgets/src/an-localization.*
 pyanaconda/version.py
 .doctrees
 _sources
@@ -88,8 +90,4 @@ pyanaconda.*rst
 docs/tests/*.rst
 zanata.xml
 tests/rpm_tests/.cache/
-# these files are temporary files for webui
-ui/webui/node_modules
-ui/webui/dist
-ui/webui/test/common/
-ui/webui/bots/
+.ruff_cache

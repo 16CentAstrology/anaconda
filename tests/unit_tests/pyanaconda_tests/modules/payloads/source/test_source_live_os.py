@@ -18,23 +18,31 @@
 # Red Hat Author(s): Jiri Konecny <jkonecny@redhat.com>
 #
 import unittest
-import pytest
-
 from unittest.mock import Mock, patch
+
+import pytest
 
 from pyanaconda.core.constants import SOURCE_TYPE_LIVE_OS_IMAGE
 from pyanaconda.modules.common.constants.interfaces import PAYLOAD_SOURCE_LIVE_OS
 from pyanaconda.modules.common.errors.payload import SourceSetupError
 from pyanaconda.modules.common.structures.storage import DeviceData
 from pyanaconda.modules.payloads.constants import SourceState
+from pyanaconda.modules.payloads.source.live_os.initialization import (
+    DetectLiveOSImageTask,
+    SetupLiveOSResult,
+    SetUpLiveOSSourceTask,
+)
 from pyanaconda.modules.payloads.source.live_os.live_os import LiveOSSourceModule
-from pyanaconda.modules.payloads.source.live_os.live_os_interface import LiveOSSourceInterface
-from pyanaconda.modules.payloads.source.live_os.initialization import SetUpLiveOSSourceTask, \
-    DetectLiveOSImageTask, SetupLiveOSResult
+from pyanaconda.modules.payloads.source.live_os.live_os_interface import (
+    LiveOSSourceInterface,
+)
 from pyanaconda.modules.payloads.source.mount_tasks import TearDownMountTask
-
-from tests.unit_tests.pyanaconda_tests import patch_dbus_get_proxy, patch_dbus_publish_object, \
-    check_task_creation, check_dbus_property
+from tests.unit_tests.pyanaconda_tests import (
+    check_dbus_property,
+    check_task_creation,
+    patch_dbus_get_proxy,
+    patch_dbus_publish_object,
+)
 
 
 class LiveOSSourceInterfaceTestCase(unittest.TestCase):
@@ -128,10 +136,10 @@ class LiveOSSourceTestCase(unittest.TestCase):
 
 class LiveOSSourceTasksTestCase(unittest.TestCase):
     """Test the tasks of the Live OS source."""
-    @patch("pyanaconda.modules.payloads.source.live_os.initialization.os.statvfs")
-    def test_live_os_image_size(self, statvfs):
+    @patch("pyanaconda.modules.payloads.source.live_os.initialization.execWithCapture")
+    def test_live_os_image_size(self, exec_mock):
         """Test Live OS image size calculation."""
-        statvfs.return_value = Mock(f_frsize=512, f_blocks=100, f_bfree=42)
+        exec_mock.return_value = "29696      /path/to/base/image/"
 
         task = SetUpLiveOSSourceTask(
                 "/path/to/base/image",

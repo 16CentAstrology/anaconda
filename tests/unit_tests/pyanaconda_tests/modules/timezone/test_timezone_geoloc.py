@@ -16,8 +16,10 @@
 # Red Hat, Inc.
 #
 from unittest import TestCase
-from unittest.mock import patch, Mock
+from unittest.mock import Mock, patch
+
 from requests.exceptions import RequestException
+
 from pyanaconda.core.constants import GEOLOC_URL_FEDORA_GEOIP, GEOLOC_URL_HOSTIP
 from pyanaconda.modules.common.structures.timezone import GeolocationData
 from pyanaconda.modules.timezone.initialization import GeolocationTask
@@ -189,6 +191,22 @@ class GeolocationTaskRunTest(TestCase):
         assert result.is_empty()
         wfn_mock.assert_called_once_with()
         loc_mock.assert_called_once()
+
+    @patch("pyanaconda.modules.timezone.initialization.conf")
+    def test_empty_url(self, conf_mock):
+        """Test GeolocationTask with no viable result"""
+        conf_mock.timezone.geolocation_provider = ""
+        retval = GeolocationData()  # empty by default
+
+        with patch.object(GeolocationTask, "_wait_for_network", return_value=True) as wfn_mock:
+            with patch.object(GeolocationTask, "_locate", return_value=retval) as loc_mock:
+                task = GeolocationTask()
+                result = task.run()
+
+        assert isinstance(result, GeolocationData)
+        assert result.is_empty()
+        wfn_mock.assert_not_called()
+        loc_mock.assert_not_called()
 
 
 class MockNetworkProxy:

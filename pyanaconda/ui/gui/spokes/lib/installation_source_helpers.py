@@ -20,25 +20,29 @@ import re
 import signal
 from functools import partial
 
+import gi
 from dasbus.structure import get_fields
 
 from pyanaconda.anaconda_loggers import get_module_logger
-from pyanaconda.core import glib, constants
+from pyanaconda.core import constants, glib
 from pyanaconda.core.constants import REPO_ORIGIN_USER
-from pyanaconda.core.i18n import _, N_, C_
+from pyanaconda.core.i18n import C_, N_, _
 from pyanaconda.core.path import join_paths
 from pyanaconda.core.payload import ProxyString, ProxyStringError, parse_nfs_url
 from pyanaconda.core.process_watchers import PidWatcher
-from pyanaconda.core.regexes import URL_PARSE, REPO_NAME_VALID, HOSTNAME_PATTERN_WITHOUT_ANCHORS
+from pyanaconda.core.regexes import (
+    HOSTNAME_PATTERN_WITHOUT_ANCHORS,
+    REPO_NAME_VALID,
+    URL_PARSE,
+)
 from pyanaconda.modules.common.structures.payload import RepoConfigurationData
 from pyanaconda.modules.common.structures.validation import ValidationReport
 from pyanaconda.payload import utils as payload_utils
 from pyanaconda.ui.gui import GUIObject, really_hide
 from pyanaconda.ui.gui.helpers import GUIDialogInputCheckHandler
-from pyanaconda.ui.gui.utils import find_first_child
+from pyanaconda.ui.gui.utils import find_first_child, set_password_visibility
 from pyanaconda.ui.helpers import InputCheck
 
-import gi
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk
 
@@ -50,7 +54,6 @@ PROTOCOL_HTTP = 'http'
 PROTOCOL_HTTPS = 'https'
 PROTOCOL_FTP = 'ftp'
 PROTOCOL_NFS = 'nfs'
-PROTOCOL_FILE = 'file'
 PROTOCOL_MIRROR = 'Closest mirror'
 
 
@@ -162,7 +165,7 @@ def collect_conflicting_repo_names(payload):
     """Collect repo names that could conflict with additional repositories."""
     current_repositories = payload.get_repo_configurations()
     allowed_names = [r.name for r in current_repositories]
-    forbidden_names = set(payload.dnf_manager.repositories)
+    forbidden_names = set(payload.proxy.GetAvailableRepositories())
     return list(forbidden_names - set(allowed_names))
 
 
@@ -236,7 +239,7 @@ def validate_repo_url(url):
     if url.startswith("hd:"):
         return InputCheck.CHECK_OK
 
-    # Validate a NFS source.
+    # Validate an NFS source.
     if url.startswith("nfs:"):
         _options, host, path = parse_nfs_url(url)
 
@@ -357,6 +360,20 @@ class ProxyDialog(GUIObject, GUIDialogInputCheckHandler):
         self._proxy_auth_box.set_sensitive(button.get_active())
         self._proxy_validate.update_check_status()
 
+    def on_password_icon_clicked(self, entry, icon_pos, event):
+        """Called by Gtk callback when the icon of a password entry is clicked."""
+        set_password_visibility(entry, not entry.get_visibility())
+
+    def on_password_entry_map(self, entry):
+        """Called when a proxy password entry widget is going to be displayed.
+
+        - Without this the password visibility toggle icon would not be shown.
+        - The password should be hidden every time the entry widget is displayed
+          to avoid showing the password in plain text in case the user previously
+          displayed the password and then closed the dialog.
+        """
+        set_password_visibility(entry, False)
+
     def refresh(self):
         GUIObject.refresh(self)
 
@@ -454,8 +471,7 @@ class MediaCheckDialog(GUIObject):
             return True
 
         pct = float(line)/100
-        if pct > 1.0:
-            pct = 1.0
+        pct = min(pct, 1.0)
 
         self.progress_bar.set_fraction(pct)
         return True

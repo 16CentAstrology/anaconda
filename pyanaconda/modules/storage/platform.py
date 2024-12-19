@@ -24,7 +24,7 @@ from blivet.devicelibs import raid
 from blivet.size import Size
 
 from pyanaconda.anaconda_loggers import get_module_logger
-from pyanaconda.core.i18n import _, N_
+from pyanaconda.core.i18n import N_, _
 from pyanaconda.modules.storage.partitioning.specification import PartSpec
 
 log = get_module_logger(__name__)
@@ -43,13 +43,12 @@ RAID_DESCRIPTION = N_("RAID Device")
 MBR_DESCRIPTION = N_("Master Boot Record")
 EFI_DESCRIPTION = N_("EFI System Partition")
 PREP_BOOT_DESCRIPTION = N_("PReP Boot Partition")
-APPLE_EFI_DESCRIPTION = N_("Apple EFI Boot Partition")
 APPLE_BOOTSTRAP_DESCRIPTION = N_("Apple Bootstrap Partition")
 DASD_DESCRIPTION = N_("DASD")
 ZFCP_DESCRIPTION = N_("zFCP")
 
 
-class Platform(object):
+class Platform:
     """A base class for a platform.
 
     A class containing platform-specific information and methods for use
@@ -224,58 +223,9 @@ class EFI(Platform):
         return PartSpec(
             mountpoint="/boot/efi",
             fstype="efi",
-            size=Size("200MiB"),
+            size=Size("500MiB"),
             max_size=Size("600MiB"),
             grow=True
-        )
-
-
-class MacEFI(EFI):
-
-    @property
-    def packages(self):
-        """Packages required for this platform."""
-        return ["mactel-boot"]
-
-    @property
-    def non_linux_format_types(self):
-        """Format types of devices with non-linux operating systems."""
-        return ["macefi"]
-
-    @property
-    def stage1_suggestion(self):
-        """The platform-specific suggestion about the stage1 device."""
-        return _(
-            "For a UEFI installation, you must include "
-            "a Linux HFS+ ESP on a GPT-formatted "
-            "disk, mounted at /boot/efi."
-        )
-
-    @property
-    def stage1_descriptions(self):
-        """The platform-specific descriptions of the stage1 device."""
-        return {
-            "partition": _(APPLE_EFI_DESCRIPTION),
-            "mdarray": _(RAID_DESCRIPTION)
-        }
-
-    @property
-    def stage1_constraints(self):
-        """The platform-specific constraints for the stage1 device."""
-        constraints = {
-            PLATFORM_FORMAT_TYPES: ["macefi"]
-        }
-        return dict(super().stage1_constraints, **constraints)
-
-    @property
-    def _bootloader_partition(self):
-        """The default bootloader partition for this platform."""
-        return PartSpec(
-            mountpoint="/boot/efi",
-            fstype="macefi",
-            size=Size("200MiB"),
-            max_size=Size("600MiB"),
-            grow=True,
         )
 
 
@@ -460,6 +410,41 @@ class ARM(Platform):
         return dict(super().stage1_constraints, **constraints)
 
 
+class RISCV64(Platform):
+
+    @property
+    def stage1_suggestion(self):
+        """The platform-specific suggestion about the stage1 device."""
+        return _(
+            "You must include at least one MBR-formatted "
+            "disk as an install target."
+        )
+
+    @property
+    def stage1_descriptions(self):
+        """The platform-specific descriptions of the stage1 device."""
+        return {
+            "disk": _(MBR_DESCRIPTION),
+            "partition": _(PARTITION_DESCRIPTION)
+        }
+
+    @property
+    def stage1_constraints(self):
+        """The platform-specific constraints for the stage1 device."""
+        constraints = {
+            PLATFORM_DEVICE_TYPES: ["disk"]
+        }
+        return dict(super().stage1_constraints, **constraints)
+
+
+class RISCV64EFI(EFI):
+
+    @property
+    def non_linux_format_types(self):
+        """Format types of devices with non-linux operating systems."""
+        return ["vfat", "ntfs"]
+
+
 def get_platform():
     """Check the architecture of the system and return an instance of a
        Platform subclass to match.  If the architecture could not be determined,
@@ -480,18 +465,20 @@ def get_platform():
     elif arch.is_s390():
         return S390()
     elif arch.is_efi():
-        if arch.is_mactel():
-            return MacEFI()
-        elif arch.is_aarch64():
+        if arch.is_aarch64():
             return Aarch64EFI()
         elif arch.is_arm():
             return ArmEFI()
+        elif arch.is_riscv64():
+            return RISCV64EFI()
         else:
             return EFI()
     elif arch.is_x86():
         return X86()
     elif arch.is_arm():
         return ARM()
+    elif arch.is_riscv64():
+        return RISCV64()
     else:
         raise SystemError("Could not determine system architecture.")
 

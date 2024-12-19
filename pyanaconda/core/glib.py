@@ -23,33 +23,74 @@
 #
 
 import gi
+
 gi.require_version("GLib", "2.0")
 gi.require_version("Gio", "2.0")
 
-from gi.repository.GLib import markup_escape_text, format_size_full, \
-                               timeout_add_seconds, timeout_add, idle_add, \
-                               io_add_watch, child_watch_add, \
-                               source_remove, timeout_source_new, \
-                               spawn_close_pid, spawn_async_with_pipes, \
-                               MainLoop, MainContext, \
-                               GError, Variant, VariantType, Bytes, \
-                               IOCondition, IOChannel, SpawnFlags, \
-                               MAXUINT
 from gi.repository.Gio import Cancellable
+from gi.repository.GLib import (
+    MAXUINT,
+    Bytes,
+    GError,
+    IOChannel,
+    IOCondition,
+    LogLevelFlags,
+    LogWriterOutput,
+    MainContext,
+    MainLoop,
+    SpawnFlags,
+    Variant,
+    VariantType,
+    child_watch_add,
+    format_size_full,
+    idle_add,
+    io_add_watch,
+    log_set_handler,
+    log_set_writer_func,
+    log_writer_format_fields,
+    markup_escape_text,
+    source_remove,
+    spawn_async_with_pipes,
+    spawn_close_pid,
+    timeout_add,
+    timeout_add_seconds,
+    timeout_source_new,
+)
 
 from pyanaconda.anaconda_loggers import get_module_logger
+
 log = get_module_logger(__name__)
 
 
-__all__ = ["create_main_loop", "create_new_context",
-           "markup_escape_text", "format_size_full",
-           "timeout_add_seconds", "timeout_add", "idle_add",
-           "io_add_watch", "child_watch_add",
-           "source_remove", "timeout_source_new",
-           "spawn_close_pid", "spawn_async_with_pipes",
-           "GError", "Variant", "VariantType", "Bytes",
-           "IOCondition", "IOChannel", "SpawnFlags",
-           "MAXUINT", "Cancellable"]
+__all__ = [
+    "MAXUINT",
+    "Bytes",
+    "Cancellable",
+    "GError",
+    "IOChannel",
+    "IOCondition",
+    "LogLevelFlags",
+    "LogWriterOutput",
+    "SpawnFlags",
+    "Variant",
+    "VariantType",
+    "child_watch_add",
+    "create_main_loop",
+    "create_new_context",
+    "format_size_full",
+    "idle_add",
+    "io_add_watch",
+    "log_set_handler",
+    "log_set_writer_func",
+    "log_writer_format_fields",
+    "markup_escape_text",
+    "source_remove",
+    "spawn_async_with_pipes",
+    "spawn_close_pid",
+    "timeout_add",
+    "timeout_add_seconds",
+    "timeout_source_new",
+]
 
 
 def create_main_loop(main_context=None):
@@ -132,7 +173,7 @@ def sync_call_glib(context, async_call, async_call_finish, timeout, *call_args):
     timeout_source.attach(context)
     callbacks.append(timeout_source.destroy)
 
-    def _finish_cb(source_object, async_result):
+    def _finish_cb(_source_object, async_result):
         log.debug("sync_call_glib[%s]: call %s",
                   info,
                   async_call_finish.get_symbol())

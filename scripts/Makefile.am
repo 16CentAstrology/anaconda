@@ -16,12 +16,15 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 scriptsdir = $(libexecdir)/$(PACKAGE_NAME)
-dist_scripts_SCRIPTS = run-anaconda anaconda-pre-log-gen log-capture start-module apply-updates
+dist_scripts_SCRIPTS = run-anaconda anaconda-pre-log-gen log-capture start-module apply-updates \
+                       run-in-new-session
 
 dist_noinst_SCRIPTS  = makeupdates makebumpver
 
 dist_bin_SCRIPTS = anaconda-cleanup instperf anaconda-disable-nm-ibft-plugin \
                    anaconda-nm-disable-autocons
+
+dist_sbin_SCRIPTS    = handle-sshpw
 
 miscdir = $(datadir)/$(PACKAGE_NAME)
 dist_misc_DATA = instperf.p

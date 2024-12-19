@@ -28,28 +28,44 @@ import dnf.module.module_base
 import dnf.repo
 import dnf.subject
 import libdnf.conf
-
 from blivet.size import Size
 
 from pyanaconda.anaconda_loggers import get_module_logger
 from pyanaconda.core.configuration.anaconda import conf
-from pyanaconda.core.constants import DNF_DEFAULT_TIMEOUT, DNF_DEFAULT_RETRIES, URL_TYPE_BASEURL, \
-    URL_TYPE_MIRRORLIST, URL_TYPE_METALINK, DNF_DEFAULT_REPO_COST
+from pyanaconda.core.constants import (
+    DNF_DEFAULT_REPO_COST,
+    DNF_DEFAULT_RETRIES,
+    DNF_DEFAULT_TIMEOUT,
+    URL_TYPE_BASEURL,
+    URL_TYPE_METALINK,
+    URL_TYPE_MIRRORLIST,
+)
 from pyanaconda.core.i18n import _
 from pyanaconda.core.payload import ProxyString, ProxyStringError
 from pyanaconda.core.util import get_os_release_value
 from pyanaconda.modules.common.errors.installation import PayloadInstallationError
-from pyanaconda.modules.common.errors.payload import UnknownCompsEnvironmentError, \
-    UnknownCompsGroupError, UnknownRepositoryError
-from pyanaconda.modules.common.structures.comps import CompsEnvironmentData, CompsGroupData
+from pyanaconda.modules.common.errors.payload import (
+    UnknownCompsEnvironmentError,
+    UnknownCompsGroupError,
+    UnknownRepositoryError,
+)
+from pyanaconda.modules.common.structures.comps import (
+    CompsEnvironmentData,
+    CompsGroupData,
+)
 from pyanaconda.modules.common.structures.packages import PackagesConfigurationData
 from pyanaconda.modules.common.structures.payload import RepoConfigurationData
 from pyanaconda.modules.payloads.constants import DNF_REPO_DIRS
 from pyanaconda.modules.payloads.payload.dnf.download_progress import DownloadProgress
-from pyanaconda.modules.payloads.payload.dnf.transaction_progress import TransactionProgress, \
-    process_transaction_progress
-from pyanaconda.modules.payloads.payload.dnf.utils import get_product_release_version, \
-    calculate_hash
+from pyanaconda.modules.payloads.payload.dnf.transaction_progress import (
+    TransactionProgress,
+    process_transaction_progress,
+)
+from pyanaconda.modules.payloads.payload.dnf.utils import (
+    calculate_hash,
+    get_product_release_version,
+    transaction_has_errors,
+)
 
 log = get_module_logger(__name__)
 
@@ -88,7 +104,7 @@ class InvalidSelectionError(DNFManagerError):
     """The software selection couldn't be resolved."""
 
 
-class DNFManager(object):
+class DNFManager:
     """The abstraction of the DNF base."""
 
     def __init__(self):
@@ -125,8 +141,11 @@ class DNFManager(object):
         base.conf.gpgcheck = False
         base.conf.skip_if_unavailable = False
 
-        # Set the substitution variables.
-        cls._reset_substitution(base)
+        # Set the default release version.
+        base.conf.releasever = get_product_release_version()
+
+        # Load variables from the host (rhbz#1920735).
+        base.conf.substitutions.update_from_etc("/")
 
         # Set the installation root.
         base.conf.installroot = conf.target.system_root
@@ -148,15 +167,6 @@ class DNFManager(object):
 
         log.debug("The DNF base has been created.")
         return base
-
-    @classmethod
-    def _reset_substitution(cls, base):
-        """Reset substitution variables of the given DNF base."""
-        # Set the default release version.
-        base.conf.releasever = get_product_release_version()
-
-        # Load variables from the host (rhbz#1920735).
-        base.conf.substitutions.update_from_etc("/")
 
     def reset_base(self):
         """Reset the DNF base.
@@ -256,17 +266,6 @@ class DNFManager(object):
             return None
 
         return env.id
-
-    def is_environment_valid(self, environment_name):
-        """Is the given environment valid?
-
-        FIXME: Could we use the resolve_environment method instead?
-
-        :param environment_name: an identifier of an environment
-        :return: True or False
-        """
-        environment_id = self.resolve_environment(environment_name)
-        return environment_id in self.environments
 
     def get_environment_data(self, environment_name) -> CompsEnvironmentData:
         """Get the data of the specified environment.
@@ -435,13 +434,11 @@ class DNFManager(object):
 
         :param release_version: a string for $releasever
         """
+        if not release_version:
+            return
+
         self._base.conf.releasever = release_version
         log.debug("The $releasever variable is set to '%s'.", release_version)
-
-    def reset_substitution(self):
-        """Reset the substitution variables."""
-        self._reset_substitution(self._base)
-        log.debug("The substitution variables have been reset.")
 
     def get_installation_size(self):
         """Calculate the installation size.
@@ -524,44 +521,6 @@ class DNFManager(object):
 
         packages = self._base.sack.query().available().filter(name__glob=pattern)
         return [p.name for p in packages]
-
-    def enable_modules(self, module_specs):
-        """Mark module streams for enabling.
-
-        Mark module streams matching the module_specs list and also
-        all required modular dependencies for enabling. For specs
-        that do not specify the stream, the default stream is used.
-
-        :param module_specs: a list of specs
-        :raise MissingSpecsError: if there are missing specs
-        :raise BrokenSpecsError: if there are broken specs
-        """
-        log.debug("Enabling modules: %s", module_specs)
-
-        try:
-            module_base = dnf.module.module_base.ModuleBase(self._base)
-            module_base.enable(module_specs)
-        except dnf.exceptions.MarkingErrors as e:
-            log.error("Failed to enable modules!\n%s", str(e))
-            self._handle_marking_errors(e)
-
-    def disable_modules(self, module_specs):
-        """Mark modules for disabling.
-
-        Mark modules matching the module_specs list for disabling.
-        Only the name part of the module specification is relevant.
-
-        :param module_specs: a list of specs to disable
-        :raise MissingSpecsError: if there are missing specs
-        :raise BrokenSpecsError: if there are broken specs
-        """
-        log.debug("Disabling modules: %s", module_specs)
-        try:
-            module_base = dnf.module.module_base.ModuleBase(self._base)
-            module_base.disable(module_specs)
-        except dnf.exceptions.MarkingErrors as e:
-            log.error("Failed to disable modules!\n%s", str(e))
-            self._handle_marking_errors(e)
 
     def apply_specs(self, include_list, exclude_list):
         """Mark packages, groups and modules for installation.
@@ -713,26 +672,24 @@ class DNFManager(object):
     def _run_transaction(base, display):
         """Run the DNF transaction.
 
-        Execute the DNF transaction and catch any errors. An error
-        doesn't always raise a BaseException, so presence of 'quit'
-        without a preceding 'done' message also indicates a problem.
+        Execute the DNF transaction and catch any errors.
 
         :param base: the DNF base
         :param display: the DNF progress-reporting object
         """
         log.debug("Running the transaction...")
-        exit_reason = None
 
         try:
             base.do_transaction(display)
-            exit_reason = "DNF done"
+            if transaction_has_errors(base.transaction):
+                display.error("The transaction process has ended with errors.")
         except BaseException as e:  # pylint: disable=broad-except
-            log.error("The transaction has ended abruptly: %s", str(e))
-            exit_reason = str(e) + traceback.format_exc()
+            display.error("The transaction process has ended abruptly: {}\n{}".format(
+                str(e), traceback.format_exc()))
         finally:
             log.debug("The transaction has ended.")
             base.close()  # Always close this base.
-            display.quit(exit_reason or "DNF quit")
+            display.quit("DNF quit")
 
     @property
     def repositories(self):
@@ -853,20 +810,6 @@ class DNFManager(object):
             repo.sslclientkey = data.ssl_configuration.client_key_path
 
         return repo
-
-    def remove_repository(self, repo_id):
-        """Remove a repository.
-
-        Remove a repository with the specified name.
-        Do nothing if the repository doesn't exist.
-
-        :param repo_id: an identifier of a repository
-        """
-        with self._lock:
-            if repo_id in self._base.repos:
-                self._base.repos.pop(repo_id)
-
-        log.info("Removed the '%s' repository.", repo_id)
 
     def generate_repo_file(self, data: RepoConfigurationData):
         """Generate a content of the .repo file.

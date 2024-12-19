@@ -16,8 +16,9 @@
 # You should have received a copy of the GNU Lesser General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-from contextlib import contextmanager
 import signal
+from contextlib import contextmanager
+
 
 @contextmanager
 def timer(seconds):
@@ -26,7 +27,7 @@ def timer(seconds):
        If the code within the context does not finish within the given number
        of seconds, it will raise an AssertionError.
     """
-    def _handle_sigalrm(signum, frame):
+    def _handle_sigalrm(_signum, _frame):
         raise AssertionError("Test failed to complete within %d seconds" % seconds)
 
     old_handler = signal.signal(signal.SIGALRM, _handle_sigalrm)

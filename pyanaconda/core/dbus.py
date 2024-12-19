@@ -18,16 +18,20 @@
 #
 import os
 
-from dasbus.connection import SystemMessageBus, MessageBus
+from dasbus.connection import MessageBus, SessionMessageBus, SystemMessageBus
 from dasbus.constants import DBUS_STARTER_ADDRESS
-from dasbus.error import ErrorMapper, get_error_decorator, AbstractErrorRule
+from dasbus.error import AbstractErrorRule, ErrorMapper, get_error_decorator
+
 from pyanaconda.anaconda_loggers import get_module_logger
-from pyanaconda.core.constants import DBUS_ANACONDA_SESSION_ADDRESS, ANACONDA_BUS_ADDR_FILE
+from pyanaconda.core.constants import (
+    ANACONDA_BUS_ADDR_FILE,
+    DBUS_ANACONDA_SESSION_ADDRESS,
+)
 from pyanaconda.modules.common.errors import register_errors
 
 log = get_module_logger(__name__)
 
-__all__ = ["DBus", "SystemBus", "error_mapper", "dbus_error"]
+__all__ = ["DBus", "SessionBus", "SystemBus", "dbus_error", "error_mapper"]
 
 
 class AnacondaMessageBus(MessageBus):
@@ -94,25 +98,26 @@ class DefaultNameErrorRule(AbstractErrorRule):
         """
         self._default_name = default_name
 
-    def match_type(self, exception_type):
+    def match_type(self, _exception_type):
         """Match every Python exception raised on the server side."""
         return True
 
-    def get_name(self, exception_type):
+    def get_name(self, _exception_type):
         """Return a default error name for every matched exception."""
         return self._default_name
 
-    def match_name(self, error_name):
+    def match_name(self, _error_name):
         """Don't apply this rule on the client side."""
         return False
 
-    def get_type(self, error_name):
+    def get_type(self, _error_name):
         """There is no default error type in this rule."""
-        return None
-
 
 # System bus.
 SystemBus = SystemMessageBus()
+
+# Session bus.
+SessionBus = SessionMessageBus()
 
 # The mapper of DBus errors.
 error_mapper = AnacondaErrorMapper()

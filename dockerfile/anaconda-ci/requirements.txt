@@ -4,12 +4,10 @@
 # for format details see https://pip.pypa.io/en/stable/reference/requirements-file-format/
 
 # unit tests of all kinds
-pocketlint
+pocketlint  # translatable strings and translations, used by pylint and glade tests
 coverage
-pycodestyle
-dogtail
-rpmfluff
-freezegun
+rpmfluff  # rpm mocking
+freezegun  # time manipulation
 pytest
 
 # jinja templates
@@ -17,5 +15,11 @@ pyyaml
 jinja2
 
 # pylint and its supporting libs
-pylint == 2.17.0
-astroid == 2.15.0
+pylint == 3.3.2
+astroid == 3.3.6
+
+# ruff for fast linting
+ruff == 0.8.3
+
+# vulture for dead code analysis
+vulture == 2.14

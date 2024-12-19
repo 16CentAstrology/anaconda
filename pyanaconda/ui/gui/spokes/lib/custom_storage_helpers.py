@@ -21,19 +21,29 @@ from collections import namedtuple
 from dasbus.structure import get_fields
 
 from pyanaconda.anaconda_loggers import get_module_logger
-from pyanaconda.core.i18n import _, N_, CN_, C_
-from pyanaconda.core.storage import PROTECTED_FORMAT_TYPES, SIZE_POLICY_AUTO, SIZE_POLICY_MAX, \
-    DEVICE_TYPE_LVM, DEVICE_TYPE_BTRFS, DEVICE_TYPE_LVM_THINP, DEVICE_TYPE_MD, Size
+from pyanaconda.core.i18n import C_, CN_, N_, _
+from pyanaconda.core.storage import (
+    DEVICE_TYPE_BTRFS,
+    DEVICE_TYPE_LVM,
+    DEVICE_TYPE_LVM_THINP,
+    DEVICE_TYPE_MD,
+    PROTECTED_FORMAT_TYPES,
+    SIZE_POLICY_AUTO,
+    SIZE_POLICY_MAX,
+    Size,
+)
 from pyanaconda.core.string import lower_ascii
-from pyanaconda.modules.common.structures.device_factory import DeviceFactoryRequest, \
-    DeviceFactoryPermissions
-from pyanaconda.modules.common.structures.storage import DeviceFormatData, DeviceData
+from pyanaconda.modules.common.structures.device_factory import (
+    DeviceFactoryPermissions,
+    DeviceFactoryRequest,
+)
+from pyanaconda.modules.common.structures.storage import DeviceData, DeviceFormatData
 from pyanaconda.modules.common.structures.validation import ValidationReport
-from pyanaconda.ui.lib.storage import size_from_input
-from pyanaconda.ui.helpers import InputCheck
 from pyanaconda.ui.gui import GUIObject
 from pyanaconda.ui.gui.helpers import GUIDialogInputCheckHandler
 from pyanaconda.ui.gui.utils import fancy_set_sensitive, really_hide, really_show
+from pyanaconda.ui.helpers import InputCheck
+from pyanaconda.ui.lib.storage import size_from_input
 
 log = get_module_logger(__name__)
 
@@ -255,7 +265,7 @@ class AddDialog(GUIObject):
         self._warning_label = self.builder.get_object("mountPointWarningLabel")
 
         self._size_entry = self.builder.get_object("addSizeEntry")
-        self._size_entry.set_tooltip_text(DESIRED_CAPACITY_HINT)
+        self._size_entry.set_tooltip_text(_(DESIRED_CAPACITY_HINT))
 
         self._populate_mount_points()
 
@@ -325,11 +335,11 @@ class ConfirmDeleteDialog(GUIObject):
     mainWidgetName = "confirmDeleteDialog"
     uiFile = "spokes/lib/custom_storage_helpers.glade"
 
-    def __init__(self, data, device_tree, root_name, device_name, is_multiselection):
+    def __init__(self, data, device_tree, root_name, device_id, is_multiselection):
         super().__init__(data)
         self._device_tree = device_tree
         self._root_name = root_name
-        self._device_name = device_name
+        self._device_id = device_id
         self._is_multiselection = is_multiselection
 
         self._label = self.builder.get_object("confirmLabel")
@@ -370,17 +380,17 @@ class ConfirmDeleteDialog(GUIObject):
 
     def _get_label_text(self):
         device_data = DeviceData.from_structure(
-            self._device_tree.GetDeviceData(self._device_name)
+            self._device_tree.GetDeviceData(self._device_id)
         )
 
         format_data = DeviceFormatData.from_structure(
-            self._device_tree.GetFormatData(self._device_name)
+            self._device_tree.GetFormatData(self._device_id)
         )
-        device_name = self._device_name
+        device_name = device_data.name
         mount_point = format_data.attrs.get("mount-point", "")
 
         if mount_point:
-            device_name = "{} ({})".format(mount_point, self._device_name)
+            device_name = "{} ({})".format(mount_point, device_data.name)
 
         if format_data.type in PROTECTED_FORMAT_TYPES:
             return _(
@@ -398,7 +408,7 @@ class ConfirmDeleteDialog(GUIObject):
                 "Are you sure you want to delete all of the data on {}, including snapshots?"
             ).format(device_name)
 
-        return _("Are you sure you want to delete all of the data on {}?").format(device_name)
+        return _("Are you sure you want to delete all of the data on {}?").format(device_data.name)
 
     def run(self):
         return self.window.run()
@@ -437,12 +447,12 @@ class DisksDialog(GUIObject):
                                               "If you select multiple, only 1 drive will be used."))
 
     def _populate_disks(self):
-        for device_name in self._disks:
+        for disk_id in self._disks:
             device_data = DeviceData.from_structure(
-                self._device_tree.GetDeviceData(device_name)
+                self._device_tree.GetDeviceData(disk_id)
             )
             device_free_space = self._device_tree.GetDiskFreeSpace(
-                [device_name]
+                [disk_id]
             )
             self._store.append([
                 "{} ({})".format(
@@ -451,7 +461,8 @@ class DisksDialog(GUIObject):
                 ),
                 str(Size(device_data.size)),
                 str(Size(device_free_space)),
-                device_name
+                device_data.name,
+                device_data.device_id
             ])
 
     def _select_disks(self):
@@ -460,8 +471,8 @@ class DisksDialog(GUIObject):
         selection = self._view.get_selection()
 
         while itr:
-            device_name = model.get_value(itr, 3)
-            if device_name in self._selected_disks:
+            device_id = model.get_value(itr, 4)
+            if device_id in self._selected_disks:
                 selection.select_iter(itr)
 
             itr = model.iter_next(itr)
@@ -476,8 +487,8 @@ class DisksDialog(GUIObject):
 
         for path in paths:
             itr = model.get_iter(path)
-            device_name = model.get_value(itr, 3)
-            self._selected_disks.append(device_name)
+            device_id = model.get_value(itr, 4)
+            self._selected_disks.append(device_id)
 
         self.window.destroy()
 
@@ -490,8 +501,7 @@ class ContainerDialog(GUIObject, GUIDialogInputCheckHandler):
                       "containerRaidStoreFiltered", "containerRaidLevelLabel",
                       "containerRaidLevelCombo", "raidLevelStore",
                       "containerSizeCombo", "containerSizeEntry",
-                      "containerSizeLabel", "containerEncryptedCheckbox",
-                      "luksVersionCombo", "luksVersionStore", "luksVersionLabel"]
+                      "containerSizeLabel", "containerEncryptedCheckbox"]
     mainWidgetName = "container_dialog"
     uiFile = "spokes/lib/custom_storage_helpers.glade"
 
@@ -504,7 +514,6 @@ class ContainerDialog(GUIObject, GUIDialogInputCheckHandler):
         self._permissions = permissions
         self._original_name = request.container_name
         self._container_names = names
-        self._original_luks_version = request.luks_version
         self._error = ""
 
         self._title_label = self.builder.get_object("container_dialog_title_label")
@@ -512,9 +521,6 @@ class ContainerDialog(GUIObject, GUIDialogInputCheckHandler):
         self._error_label = self.builder.get_object("containerErrorLabel")
         self._name_entry = self.builder.get_object("container_name_entry")
         self._encryptCheckbutton = self.builder.get_object("containerEncryptedCheckbox")
-        self._luks_combo = self.builder.get_object("luksVersionCombo")
-        self._luks_store = self.builder.get_object("luksVersionStore")
-        self._luks_label = self.builder.get_object("luksVersionLabel")
         self._raidStoreFilter = self.builder.get_object("containerRaidStoreFiltered")
         self._store = self.builder.get_object("disk_store")
         self._treeview = self.builder.get_object("container_disk_view")
@@ -537,7 +543,6 @@ class ContainerDialog(GUIObject, GUIDialogInputCheckHandler):
         self._set_name()
         self._set_size()
         self._set_encryption()
-        self._populate_luks()
 
     def _set_labels(self):
         container_type = get_container_type(self._request.device_type)
@@ -552,12 +557,12 @@ class ContainerDialog(GUIObject, GUIDialogInputCheckHandler):
         self._dialog_label.set_text(dialog_text)
 
     def _populate_disks(self):
-        for device_name in self._disks:
+        for disk_id in self._disks:
             device_data = DeviceData.from_structure(
-                self._device_tree.GetDeviceData(device_name)
+                self._device_tree.GetDeviceData(disk_id)
             )
             device_free_space = self._device_tree.GetDiskFreeSpace(
-                [device_name]
+                [disk_id]
             )
             self._store.append([
                 "{} ({})".format(
@@ -566,7 +571,8 @@ class ContainerDialog(GUIObject, GUIDialogInputCheckHandler):
                 ),
                 str(Size(device_data.size)),
                 str(Size(device_free_space)),
-                device_name
+                device_data.name,
+                device_data.device_id
             ])
 
     def _select_disks(self):
@@ -575,8 +581,8 @@ class ContainerDialog(GUIObject, GUIDialogInputCheckHandler):
         selection = self._treeview.get_selection()
 
         while itr:
-            device_name = model.get_value(itr, 3)
-            if device_name in self._request.disks:
+            device_id = model.get_value(itr, 4)
+            if device_id in self._request.disks:
                 selection.select_iter(itr)
 
             itr = model.iter_next(itr)
@@ -661,32 +667,6 @@ class ContainerDialog(GUIObject, GUIDialogInputCheckHandler):
         if not self._permissions.container_encrypted:
             fancy_set_sensitive(self._encryptCheckbutton, False)
 
-    def _populate_luks(self):
-        """Set up the LUKS version combo box."""
-        # Add the values.
-        self._luks_store.clear()
-        for version in ["luks1", "luks2"]:
-            self._luks_store.append([version])
-
-        # Get the selected value.
-        luks_version = self._request.luks_version or self._device_tree.GetDefaultLUKSVersion()
-
-        # Set the selected value.
-        idx = next(
-            i for i, data in enumerate(self._luks_combo.get_model())
-            if data[0] == luks_version
-        )
-        self._luks_combo.set_active(idx)
-        self._update_luks_combo()
-
-    def _update_luks_combo(self):
-        if self._encryptCheckbutton.get_active():
-            really_show(self._luks_label)
-            really_show(self._luks_combo)
-        else:
-            really_hide(self._luks_label)
-            really_hide(self._luks_combo)
-
     def run(self):
         while True:
             self._error = ""
@@ -724,7 +704,6 @@ class ContainerDialog(GUIObject, GUIDialogInputCheckHandler):
         self._request.disks = self._get_disks()
         self._request.container_name = self._name_entry.get_text().strip()
         self._request.container_encrypted = self._encryptCheckbutton.get_active()
-        self._request.luks_version = self._get_luks_version()
         self._request.container_size_policy = self._get_size_policy()
         self._request.container_raid_level = get_selected_raid_level(self._raidLevelCombo)
         self._error_label.set_text("")
@@ -762,8 +741,8 @@ class ContainerDialog(GUIObject, GUIDialogInputCheckHandler):
 
         for path in paths:
             itr = model.get_iter(path)
-            device_name = model.get_value(itr, 3)
-            disks.append(device_name)
+            device_id = model.get_value(itr, 4)
+            disks.append(device_id)
 
         return disks
 
@@ -789,15 +768,6 @@ class ContainerDialog(GUIObject, GUIDialogInputCheckHandler):
 
         return size.get_bytes()
 
-    def _get_luks_version(self):
-        if self._encryptCheckbutton.get_active():
-            active_index = self._luks_combo.get_active()
-
-            if active_index != -1:
-                return self._luks_combo.get_model()[active_index][0]
-
-        return self._original_luks_version
-
     def on_size_changed(self, combo):
         active_index = combo.get_active()
         if active_index == 0:
@@ -806,6 +776,3 @@ class ContainerDialog(GUIObject, GUIDialogInputCheckHandler):
             self._sizeEntry.set_sensitive(False)
         else:
             self._sizeEntry.set_sensitive(True)
-
-    def on_encrypt_toggled(self, widget):
-        self._update_luks_combo()

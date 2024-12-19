@@ -18,17 +18,16 @@
 import os
 from glob import glob
 
+from pyanaconda.anaconda_loggers import get_module_logger
+from pyanaconda.core.configuration.anaconda import conf
+from pyanaconda.core.product import get_product_name
+from pyanaconda.core.util import execWithRedirect
 from pyanaconda.modules.common.errors.installation import BootloaderInstallationError
 from pyanaconda.modules.storage.bootloader.image import LinuxBootLoaderImage
-from pyanaconda.core.configuration.anaconda import conf
-from pyanaconda.core.util import execWithRedirect
-from pyanaconda.product import productName
 
-from pyanaconda.anaconda_loggers import get_module_logger
 log = get_module_logger(__name__)
 
-__all__ = ["configure_boot_loader", "install_boot_loader", "recreate_initrds",
-           "create_rescue_images"]
+__all__ = ["configure_boot_loader", "create_rescue_images", "recreate_initrds"]
 
 
 def create_rescue_images(sysroot, kernel_versions):
@@ -122,7 +121,7 @@ def _collect_os_images(storage, kernel_versions):
     log.debug("Collecting the OS images for: %s", ", ".join(kernel_versions))
 
     # all the linux images' labels are based on the default image's
-    base_label = productName
+    base_label = get_product_name()
 
     # The first one is the default kernel. Update the bootloader's default
     # entry to reflect the details of the default kernel.
@@ -192,27 +191,6 @@ def _write_sysconfig_kernel(sysroot, storage):
     f.write("# DEFAULTKERNEL specifies the default kernel package type\n")
     f.write("DEFAULTKERNEL=%s\n" % kernel)
     f.close()
-
-
-def install_boot_loader(storage):
-    """Do the final write of the boot loader.
-
-    :param storage: an instance of the storage
-    :raise: BootLoaderError if the installation fails
-    """
-    log.debug("Installing the boot loader.")
-
-    stage1_device = storage.bootloader.stage1_device
-    log.info("boot loader stage1 target device is %s", stage1_device.name)
-
-    stage2_device = storage.bootloader.stage2_device
-    log.info("boot loader stage2 target device is %s", stage2_device.name)
-
-    # Prepare the bootloader for the installation.
-    storage.bootloader.prepare(storage)
-
-    # Install the bootloader.
-    storage.bootloader.write()
 
 
 def create_bls_entries(sysroot, storage, kernel_versions):

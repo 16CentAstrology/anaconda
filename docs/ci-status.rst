@@ -13,17 +13,13 @@ The status badges are organized by repository where the github workflow is store
 Anaconda
 --------
 
-.. |container-autoupdate-fedora| image:: https://github.com/rhinstaller/anaconda/actions/workflows/container-autoupdate-fedora.yml/badge.svg
-   :alt: Refresh Fedora container images
-   :target: https://github.com/rhinstaller/anaconda/actions/workflows/container-autoupdate-fedora.yml
+.. |container-autoupdate| image:: https://github.com/rhinstaller/anaconda/actions/workflows/container-autoupdate.yml/badge.svg
+   :alt: Refresh Fedora and CentOS Stream container images
+   :target: https://github.com/rhinstaller/anaconda/actions/workflows/container-autoupdate.yml
 
 .. |container-autoupdate-eln| image:: https://github.com/rhinstaller/anaconda/actions/workflows/container-autoupdate-eln.yml/badge.svg
    :alt: Refresh ELN container images
    :target: https://github.com/rhinstaller/anaconda/actions/workflows/container-autoupdate-eln.yml
-
-.. |container-daily-rhel-copr| image:: https://github.com/rhinstaller/anaconda/actions/workflows/daily-rhel-copr.yml/badge.svg
-   :alt: Build current anaconda rhel-8 branch in RHEL COPR
-   :target: https://github.com/rhinstaller/anaconda/actions/workflows/daily-rhel-copr.yml
 
 .. |try-release-daily| image:: https://github.com/rhinstaller/anaconda/actions/workflows/try-release-daily.yml/badge.svg
    :alt: Test releasing and translations daily
@@ -33,16 +29,38 @@ Anaconda
    :alt: Make a Rawhide release automatically
    :target: https://github.com/rhinstaller/anaconda/actions/workflows/release-automatically.yml
 
+.. |tests-daily| image:: https://github.com/rhinstaller/anaconda/actions/workflows/tests-daily.yml/badge.svg
+   :alt: Run unit and RPM tests daily
+   :target: https://github.com/rhinstaller/anaconda/actions/workflows/tests-daily.yml
+
+.. |l10n-po-update| image:: https://github.com/rhinstaller/anaconda/actions/workflows/l10n-po-update.yml/badge.svg
+   :alt: Update translations
+   :target: https://github.com/rhinstaller/anaconda/actions/workflows/l10n-po-update.yml
+
 .. _Dependabot: https://github.com/rhinstaller/anaconda/network/updates
 
-|container-autoupdate-fedora|
-  Fedora CI test container images, built daily. The containers are used in unit and rpm tests.
+Anaconda Web UI
+---------------
+
+.. |cockpit-lib-update| image:: https://github.com/rhinstaller/anaconda-webui/actions/workflows/cockpit-lib-update.yml/badge.svg
+   :alt: Updates Cockpit library
+   :target: https://github.com/rhinstaller/anaconda-webui/actions/workflows/cockpit-lib-update.yml
+
+.. |weblate-sync-po| image:: https://github.com/rhinstaller/anaconda-webui/actions/workflows/weblate-sync-po.yml/badge.svg
+   :alt: Sync translations from Weblate repository
+   :target: https://github.com/rhinstaller/anaconda-webui/actions/workflows/weblate-sync-po.yml
+
+.. |weblate-sync-pot| image:: https://github.com/rhinstaller/anaconda-webui/actions/workflows/weblate-sync-pot.yml/badge.svg
+   :alt: Sync pot (source) files to Weblate repository
+   :target: https://github.com/rhinstaller/anaconda-webui/actions/workflows/weblate-sync-pot.yml
+
+.. _Dependabot: https://github.com/rhinstaller/anaconda-webui/network/updates
+
+|container-autoupdate|
+  Fedora and CentOS Stream CI test container images, built daily. The containers are used in unit and rpm tests.
 
 |container-autoupdate-eln|
   Same as above but for ELN. It is expected this can often fail.
-
-|container-daily-rhel-copr|
-  Daily builds of Anaconda in RHEL 8 COPR (internal).
 
 |try-release-daily|
   Tests the release process daily, including checks for missing important translations.
@@ -50,6 +68,14 @@ Anaconda
 |release-automatically|
   Makes a Rawhide release automatically with no human oversight for the upstream/non-Fedora part
   of the process.
+
+|tests-daily|
+  Runs unit and RPM tests every day, independent of any changes to code or containers.
+
+|l10n-po-update|
+  Updates translations weekly, by opening a PR that bumps the pinned hash used to download when building RPMs.
+
+  The PR runs the usual tests, where potential failures caused by translation changes are caught.
 
 Dependabot_
   Checks Anaconda dependencies and opens pull requests for new versions.

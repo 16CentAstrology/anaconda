@@ -16,27 +16,26 @@
 # License and may only be used or replicated with the express permission of
 # Red Hat, Inc.
 
-import unittest
 import os
-import tempfile
 import signal
-import shutil
 import sys
-import pytest
-
+import tempfile
+import unittest
+from io import StringIO
+from textwrap import dedent
 from threading import Lock
 from unittest.mock import Mock, patch
+
+import pytest
 from timer import timer
 
-from pyanaconda.core.path import make_directories
-from pyanaconda.errors import ExitError
-from pyanaconda.core.process_watchers import WatchProcesses
 from pyanaconda.core import util
-from pyanaconda.core.util import synchronized, LazyObject
 from pyanaconda.core.configuration.anaconda import conf
-
-
-ANACONDA_TEST_DIR = '/tmp/anaconda_tests_dir'
+from pyanaconda.core.live_user import User
+from pyanaconda.core.path import make_directories
+from pyanaconda.core.process_watchers import WatchProcesses
+from pyanaconda.core.util import LazyObject, is_stage2_on_nfs, synchronized
+from pyanaconda.errors import ExitError
 
 
 class RunProgramTests(unittest.TestCase):
@@ -105,6 +104,24 @@ echo "error" >&2
 
         # check that the output is an empty string
         assert util.execWithCapture("/bin/sh", ["-c", "exit 0"]) == ""
+
+    @patch("pyanaconda.core.util.startProgram")
+    @patch("pyanaconda.core.util.get_live_user")
+    def test_exec_with_capture_as_live_user(self, mock_get_live_user, mock_start_program):
+        """Test execWithCaptureAsLiveUser."""
+        mock_get_live_user.return_value = User(name="testlive",
+                                               uid=1000,
+                                               env_add={"TEST": "test"},
+                                               env_prune=("TEST_PRUNE",)
+                                               )
+        mock_start_program.return_value.communicate.return_value = (b"", b"")
+
+        util.execWithCaptureAsLiveUser('ls', [])
+
+        mock_start_program.assert_called_once()
+        assert mock_start_program.call_args.kwargs["user"] == 1000
+        assert mock_start_program.call_args.kwargs["env_add"] == {"TEST": "test"}
+        assert mock_start_program.call_args.kwargs["env_prune"] == ("TEST_PRUNE",)
 
     def test_exec_readlines(self):
         """Test execReadlines."""
@@ -235,6 +252,106 @@ kill -TERM $$
                 assert next(rl_iterator) == "three"
                 with pytest.raises(OSError):
                     rl_iterator.__next__()
+
+    def test_exec_readlines_exits_noraise(self):
+        """Test execReadlines in different child exit situations without raising errors."""
+
+        # No tests should raise anything.
+
+        # Test a normal, non-0 exit
+        with tempfile.NamedTemporaryFile(mode="wt") as testscript:
+            testscript.write("""#!/bin/sh
+        echo "one"
+        echo "two"
+        echo "three"
+        exit 1
+        """)
+            testscript.flush()
+
+            with timer(5):
+                rl_iterator = util.execReadlines(
+                    "/bin/sh",
+                    [testscript.name],
+                    raise_on_nozero=False
+                )
+                assert next(rl_iterator) == "one"
+                assert next(rl_iterator) == "two"
+                assert next(rl_iterator) == "three"
+                with pytest.raises(StopIteration):
+                    rl_iterator.__next__()
+
+                assert rl_iterator.rc == 1
+
+        # Test with signal
+        with tempfile.NamedTemporaryFile(mode="wt") as testscript:
+            testscript.write("""#!/bin/sh
+echo "one"
+echo "two"
+echo "three"
+kill -TERM $$
+""")
+            testscript.flush()
+
+            with timer(5):
+                rl_iterator = util.execReadlines(
+                    "/bin/sh",
+                    [testscript.name],
+                    raise_on_nozero=False
+                )
+                assert next(rl_iterator) == "one"
+                assert next(rl_iterator) == "two"
+                assert next(rl_iterator) == "three"
+                with pytest.raises(StopIteration):
+                    rl_iterator.__next__()
+
+                assert rl_iterator.rc == -15
+
+        # Same as above but exit before a final newline
+        with tempfile.NamedTemporaryFile(mode="wt") as testscript:
+            testscript.write("""#!/bin/sh
+echo "one"
+echo "two"
+echo -n "three"
+exit 1
+""")
+            testscript.flush()
+
+            with timer(5):
+                rl_iterator = util.execReadlines(
+                    "/bin/sh",
+                    [testscript.name],
+                    raise_on_nozero=False
+                )
+                assert next(rl_iterator) == "one"
+                assert next(rl_iterator) == "two"
+                assert next(rl_iterator) == "three"
+                with pytest.raises(StopIteration):
+                    rl_iterator.__next__()
+
+                assert rl_iterator.rc == 1
+
+        with tempfile.NamedTemporaryFile(mode="wt") as testscript:
+            testscript.write("""#!/bin/sh
+echo "one"
+echo "two"
+echo -n "three"
+kill -TERM $$
+""")
+            testscript.flush()
+
+            with timer(5):
+                rl_iterator = util.execReadlines(
+                    "/bin/sh",
+                    [testscript.name],
+                    raise_on_nozero=False
+                )
+                assert next(rl_iterator) == "one"
+                assert next(rl_iterator) == "two"
+                assert next(rl_iterator) == "three"
+                with pytest.raises(StopIteration):
+                    rl_iterator.__next__()
+
+                assert rl_iterator.rc == -15
 
     def test_exec_readlines_signals(self):
         """Test execReadlines and signal receipt."""
@@ -446,17 +563,33 @@ done
         with pytest.raises(ExitError):
             WatchProcesses.watch_process(proc, "test2")
 
+    @patch("pyanaconda.core.util.startProgram")
+    def test_do_preexec(self, mock_start_program):
+        """Test the do_preexec option of exec*** functions."""
+        mock_start_program.return_value.communicate.return_value = (b"", b"")
+
+        util.execWithRedirect("ls", [])
+        mock_start_program.assert_called_once()
+        assert mock_start_program.call_args.kwargs["do_preexec"] is True
+        mock_start_program.reset_mock()
+
+        util.execWithRedirect("ls", [], do_preexec=False)
+        mock_start_program.assert_called_once()
+        assert mock_start_program.call_args.kwargs["do_preexec"] is False
+        mock_start_program.reset_mock()
+
+        util.execWithCapture("ls", [], do_preexec=True)
+        mock_start_program.assert_called_once()
+        assert mock_start_program.call_args.kwargs["do_preexec"] is True
+        mock_start_program.reset_mock()
+
+        util.execWithCapture("ls", [], do_preexec=False)
+        mock_start_program.assert_called_once()
+        assert mock_start_program.call_args.kwargs["do_preexec"] is False
+        mock_start_program.reset_mock()
+
 
 class MiscTests(unittest.TestCase):
-
-    def setUp(self):
-        # create the directory used for file/folder tests
-        if not os.path.exists(ANACONDA_TEST_DIR):
-            os.makedirs(ANACONDA_TEST_DIR)
-
-    def tearDown(self):
-        # remove the testing directory
-        shutil.rmtree(ANACONDA_TEST_DIR)
 
     def test_get_active_console(self):
         """Test get_active_console."""
@@ -508,7 +641,7 @@ class MiscTests(unittest.TestCase):
 
         # The @synchronized decorator work on methods of classes
         # that provide self._lock with Lock or RLock instance.
-        class LockableClass(object):
+        class LockableClass:
             def __init__(self):
                 self._lock = Lock()
 
@@ -526,7 +659,7 @@ class MiscTests(unittest.TestCase):
         assert lockable.sync_test_method()
 
         # The @synchronized decorator does not work on classes without self._lock.
-        class NotLockableClass(object):
+        class NotLockableClass:
             @synchronized
             def sync_test_method(self):
                 return "Hello world!"
@@ -684,10 +817,53 @@ class MiscTests(unittest.TestCase):
                     file_contents = "\n".join(f.readlines())
                     assert "eject " + devname in file_contents
 
+    @patch("pyanaconda.core.util.open")
+    def test_is_stage2_on_nfs(self, mock_open):
+        """Test check for installation running on nfs."""
+        nfs_source_mounts = """
+        LiveOS_rootfs / overlay rw,seclabel,relatime,lowerdir=/run/rootfsbase,upperdir=/run/overlayfs,workdir=/run/ovlwork,uuid=on 0 0
+        proc /proc proc rw,nosuid,nodev,noexec,relatime 0 0
+        tmpfs /run tmpfs rw,seclabel,nosuid,nodev,size=401324k,nr_inodes=819200,mode=755,inode64 0 0
+        10.43.136.2:/mnt/data/trees/rawhide /run/install/repo nfs ro,relatime,vers=3,rsize=1048576,wsize=1048576,namlen=255,hard,nolock,proto=tcp,timeo=600,retrans=2,sec=sys,mountaddr=10.43.136.2,mountvers=3,mountport=20
+        048,mountproto=udp,local_lock=all,addr=10.43.136.2 0 0
+        mqueue /dev/mqueue mqueue rw,seclabel,nosuid,nodev,noexec,relatime 0 0
+        tmpfs /run/credentials/systemd-vconsole-setup.service tmpfs ro,seclabel,nosuid,nodev,noexec,relatime,nosymfollow,size=1024k,nr_inodes=1024,mode=700,inode64,noswap 0 0
+        10.43.136.2:/mnt/data/trees/rawhide /run/install/sources/mount-0000-nfs-device nfs rw,relatime,vers=3,rsize=1048576,wsize=1048576,namlen=255,hard,nolock,proto=tcp,timeo=600,retrans=2,sec=sys,mountaddr=10.43.136.2
+        ,mountvers=3,mountport=20048,mountproto=udp,local_lock=all,addr=10.43.136.2 0 0
+        """
+        nfs_stage2_mounts = """
+        LiveOS_rootfs / overlay rw,seclabel,relatime,lowerdir=/run/rootfsbase,upperdir=/run/overlayfs,workdir=/run/ovlwork,uuid=on 0 0
+        proc /proc proc rw,nosuid,nodev,noexec,relatime 0 0
+        tmpfs /run tmpfs rw,seclabel,nosuid,nodev,size=401324k,nr_inodes=819200,mode=755,inode64 0 0
+        10.43.136.2:/mnt/data/users/rv/s2/rvm /run/install/repo nfs ro,relatime,vers=3,rsize=1048576,wsize=1048576,namlen=255,hard,nolock,proto=tcp,timeo=600,retrans=2,sec=sys,mountaddr=10.43.136.2,mountvers=3,mountport=
+        mqueue /dev/mqueue mqueue rw,seclabel,nosuid,nodev,noexec,relatime 0 0
+        tmpfs /run/credentials/systemd-vconsole-setup.service tmpfs ro,seclabel,nosuid,nodev,noexec,relatime,nosymfollow,size=1024k,nr_inodes=1024,mode=700,inode64,noswap 0 0
+        """
+        no_nfs_mounts = """
+        LiveOS_rootfs / overlay rw,seclabel,relatime,lowerdir=/run/rootfsbase,upperdir=/run/overlayfs,workdir=/run/ovlwork,uuid=on 0 0
+        rpc_pipefs /var/lib/nfs/rpc_pipefs rpc_pipefs rw,relatime 0 0
+        mqueue /dev/mqueue mqueue rw,seclabel,nosuid,nodev,noexec,relatime 0 0
+        tmpfs /run/credentials/systemd-vconsole-setup.service tmpfs ro,seclabel,nosuid,nodev,noexec,relatime,nosymfollow,size=1024k,nr_inodes=1024,mode=700,inode64,noswap 0 0
+        """
+        nfs4_mounts = """
+        10.43.136.2:/mnt/data/users/rv/s2/rvm /run/install/repo nfs4 ro,relatime,vers=3,rsize=1048576,wsize=1048576,namlen=255,hard,nolock,proto=tcp,timeo=600,retrans=2,sec=sys,mountaddr=10.43.136.2,mountvers=3,mountport=
+        """
+        mock_open.return_value = StringIO(dedent(nfs_stage2_mounts))
+        assert is_stage2_on_nfs() is True
+
+        mock_open.return_value = StringIO(dedent(nfs_source_mounts))
+        assert is_stage2_on_nfs() is True
+
+        mock_open.return_value = StringIO(dedent(nfs4_mounts))
+        assert is_stage2_on_nfs() is True
+
+        mock_open.return_value = StringIO(dedent(no_nfs_mounts))
+        assert is_stage2_on_nfs() is False
+
 
 class LazyObjectTestCase(unittest.TestCase):
 
-    class Object(object):
+    class Object:
 
         def __init__(self):
             self._x = 0
@@ -749,9 +925,6 @@ class LazyObjectTestCase(unittest.TestCase):
 
         assert lazy_a1 == lazy_a2
         assert lazy_a2 == lazy_a1
-
-        assert lazy_a1 == lazy_a1
-        assert lazy_a2 == lazy_a2
 
     def test_neq(self):
         a = object()

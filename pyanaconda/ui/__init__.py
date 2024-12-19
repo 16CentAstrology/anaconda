@@ -20,6 +20,7 @@
 __all__ = ["UserInterface"]
 
 import copy
+
 from pyanaconda.core.util import collect
 
 
@@ -36,7 +37,7 @@ class PathDict(dict):
         return new_dict
 
 
-class UserInterface(object):
+class UserInterface:
     """This is the base class for all kinds of install UIs.  It primarily
        defines what kinds of dialogs and entry widgets every interface must
        provide that the rest of anaconda may rely upon.
@@ -153,9 +154,8 @@ class UserInterface(object):
         standalones = []
 
         def check_standalone_spokes(obj):
-            return issubclass(obj, standalone_class) and \
-                getattr(obj, "preForHub", False) or \
-                getattr(obj, "postForHub", False)
+            return ((issubclass(obj, standalone_class) and getattr(obj, "preForHub", False))
+                    or getattr(obj, "postForHub", False))
 
         for module_pattern, path in module_pattern_w_path:
             standalones.extend(

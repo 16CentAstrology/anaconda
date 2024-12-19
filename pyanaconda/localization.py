@@ -17,21 +17,22 @@
 # Red Hat, Inc.
 #
 
+import functools
 import gettext
+import glob
+import locale as locale_mod
 import os
 import re
-import langtable
-import locale as locale_mod
-import glob
 from collections import namedtuple
-import functools
 
-from pyanaconda.core import constants
-from pyanaconda.core.util import setenv, execWithRedirect
-from pyanaconda.core.string import upcase_first_letter
-from pyanaconda.modules.common.constants.services import BOSS
+import langtable
 
 from pyanaconda.anaconda_loggers import get_module_logger
+from pyanaconda.core import constants
+from pyanaconda.core.string import upcase_first_letter
+from pyanaconda.core.util import execWithRedirect, setenv
+from pyanaconda.modules.common.constants.services import BOSS
+
 log = get_module_logger(__name__)
 
 SCRIPTS_SUPPORTED_BY_CONSOLE = {'Latn', 'Cyrl', 'Grek'}
@@ -106,7 +107,11 @@ def locale_supported_in_console(locale):
     :raise InvalidLocaleSpec: if an invalid locale is given (see is_valid_langcode)
     """
     locale_scripts = get_locale_scripts(locale)
-    return set(locale_scripts).issubset(SCRIPTS_SUPPORTED_BY_CONSOLE)
+
+    if not locale_scripts:
+        return False
+
+    return locale_scripts[0] in SCRIPTS_SUPPORTED_BY_CONSOLE
 
 
 def find_best_locale_match(locale, langcodes):
@@ -408,6 +413,20 @@ def get_common_keyboard_layouts():
     return langtable.list_common_keyboards()
 
 
+def get_locale_timezones(locale):
+    """Function returning preferred timezones for the given locale.
+
+    :param locale: locale string
+    :type locale: str
+    :return: list of preferred timezones
+    :rtype: list of strings
+    :raise InvalidLocaleSpec: if an invalid locale is given (see is_valid_langcode)
+    """
+    raise_on_invalid_locale(locale)
+
+    return langtable.list_timezones(languageId=locale)
+
+
 def get_locale_console_fonts(locale):
     """Function returning preferred console fonts for the given locale.
 
@@ -638,7 +657,7 @@ def setup_locale_environment(locale=None, text_mode=False, prefer_environment=Fa
     # to a locale set at install time and saved in the kickstart.
     if not locale or prefer_environment:
         for varname in ("LANGUAGE", "LC_ALL", "LC_MESSAGES", "LANG"):
-            if varname in os.environ and os.environ[varname]:
+            if os.environ.get(varname):
                 locale = os.environ[varname]
                 break
 

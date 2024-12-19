@@ -17,13 +17,12 @@
 # License and may only be used or replicated with the express permission of
 # Red Hat, Inc.
 #
-import gi
-gi.require_version("BlockDev", "2.0")
-from gi.repository import BlockDev as blockdev
+from blivet import blockdev
 
 from pyanaconda.core.regexes import DASD_DEVICE_NUMBER
-from pyanaconda.modules.common.task import Task
+from pyanaconda.core.util import execWithRedirect
 from pyanaconda.modules.common.errors.configuration import StorageDiscoveryError
+from pyanaconda.modules.common.task import Task
 
 
 class DASDDiscoverTask(Task):
@@ -60,6 +59,12 @@ class DASDDiscoverTask(Task):
         """Discover the device."""
         # pylint: disable=try-except-raise
         try:
-            blockdev.s390.dasd_online(self._device_number)
-        except blockdev.S390Error as e:
+            rc = execWithRedirect("chzdev",
+                                  ["--enable", "dasd", self._device_number,
+                                   "--active", "--persistent",
+                                   "--yes", "--no-root-update", "--force"])
+        except RuntimeError as e:
             raise StorageDiscoveryError(str(e)) from e
+        if rc != 0:
+            raise StorageDiscoveryError(
+                "Could not set the device online. It might not exist.")

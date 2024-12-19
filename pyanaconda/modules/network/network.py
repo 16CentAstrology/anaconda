@@ -17,41 +17,62 @@
 # License and may only be used or replicated with the express permission of
 # Red Hat, Inc.
 #
+import gi
 from dasbus.client.observer import DBusObserver
 
 from pyanaconda.core.async_utils import run_in_loop
 from pyanaconda.core.configuration.anaconda import conf
 from pyanaconda.core.configuration.network import NetworkOnBoot
-from pyanaconda.core.kernel import kernel_arguments
+from pyanaconda.core.constants import NETWORK_CAPABILITY_TEAM
 from pyanaconda.core.dbus import DBus
+from pyanaconda.core.kernel import kernel_arguments
 from pyanaconda.core.signal import Signal
 from pyanaconda.modules.common.base import KickstartService
+from pyanaconda.modules.common.constants.services import HOSTNAME, NETWORK
 from pyanaconda.modules.common.containers import TaskContainer
-from pyanaconda.modules.common.structures.requirement import Requirement
-from pyanaconda.modules.common.constants.services import NETWORK, HOSTNAME
-from pyanaconda.modules.network.network_interface import NetworkInterface
-from pyanaconda.modules.network.kickstart import NetworkKickstartSpecification, \
-    update_network_hostname_data, update_network_data_with_default_device, \
-    DEFAULT_DEVICE_SPECIFICATION, update_first_network_command_activate_value
-from pyanaconda.modules.network.firewall import FirewallModule
-from pyanaconda.modules.network.device_configuration import DeviceConfigurations, \
-    supported_device_types, supported_wired_device_types
-from pyanaconda.modules.network.nm_client import devices_ignore_ipv6, get_connections_dump, \
-    get_dracut_arguments_from_connection, get_kickstart_network_data, get_new_nm_client
-from pyanaconda.modules.network.config_file import get_config_files_content, \
-    is_config_file_for_system
-from pyanaconda.modules.network.installation import NetworkInstallationTask, \
-    ConfigureActivationOnBootTask, HostnameConfigurationTask
-from pyanaconda.modules.network.initialization import ApplyKickstartTask, \
-    DumpMissingConfigFilesTask
-from pyanaconda.modules.network.utils import get_default_route_iface
 from pyanaconda.modules.common.structures.network import NetworkDeviceInfo
+from pyanaconda.modules.common.structures.requirement import Requirement
+from pyanaconda.modules.network.config_file import (
+    get_config_files_content,
+    is_config_file_for_system,
+)
+from pyanaconda.modules.network.device_configuration import (
+    DeviceConfigurations,
+    supported_device_types,
+    supported_wired_device_types,
+)
+from pyanaconda.modules.network.firewall import FirewallModule
+from pyanaconda.modules.network.initialization import (
+    ApplyKickstartTask,
+    DumpMissingConfigFilesTask,
+)
+from pyanaconda.modules.network.installation import (
+    ConfigureActivationOnBootTask,
+    HostnameConfigurationTask,
+    NetworkInstallationTask,
+)
+from pyanaconda.modules.network.kickstart import (
+    DEFAULT_DEVICE_SPECIFICATION,
+    NetworkKickstartSpecification,
+    update_first_network_command_activate_value,
+    update_network_data_with_default_device,
+    update_network_hostname_data,
+)
+from pyanaconda.modules.network.network_interface import NetworkInterface
+from pyanaconda.modules.network.nm_client import (
+    devices_ignore_ipv6,
+    get_connections_dump,
+    get_dracut_arguments_from_connection,
+    get_kickstart_network_data,
+    get_new_nm_client,
+)
+from pyanaconda.modules.network.utils import get_default_route_iface
 
-import gi
 gi.require_version("NM", "1.0")
 from gi.repository import NM
 
 from pyanaconda.anaconda_loggers import get_module_logger
+
 log = get_module_logger(__name__)
 
 
@@ -69,6 +90,9 @@ class NetworkService(KickstartService):
         self.current_hostname_changed = Signal()
         self._hostname_service_proxy = self._get_hostname_proxy()
 
+        self._capabilities = []
+        self.capabilities_changed = Signal()
+
         self.connected_changed = Signal()
         # TODO fallback solution - use Gio/GNetworkMonitor ?
         self.nm_client = get_new_nm_client()
@@ -76,6 +100,10 @@ class NetworkService(KickstartService):
             self.nm_client.connect("notify::%s" % NM.CLIENT_STATE, self._nm_state_changed)
             initial_state = self.nm_client.get_state()
             self.set_connected(self._nm_state_connected(initial_state))
+            self.nm_client.connect("notify::%s" % NM.CLIENT_CAPABILITIES,
+                                   self._nm_capabilities_changed)
+            nm_capabilities = self.nm_client.get_capabilities()
+            self.set_capabilities(self._get_capabilities_from_nm(nm_capabilities))
 
         self._original_network_data = []
         self._device_configurations = None
@@ -305,6 +333,35 @@ class NetworkService(KickstartService):
         else:
             log.debug("Connectivity state can't be determined, assuming not connecting.")
             return False
+
+    @property
+    def capabilities(self):
+        """Capabilities of the network backend."""
+        if not self.nm_available:
+            log.debug("Capabilities can't be determined.")
+            return []
+
+        return self._capabilities
+
+    def set_capabilities(self, capabilities):
+        """Set network capabilities."""
+        self._capabilities = capabilities
+        self.capabilities_changed.emit()
+        self.module_properties_changed.emit()
+        log.debug("Capabilities: %s", capabilities)
+
+    @staticmethod
+    def _get_capabilities_from_nm(nm_capabilities):
+        capabilities = []
+        if NM.Capability.TEAM in nm_capabilities:
+            capabilities.append(NETWORK_CAPABILITY_TEAM)
+
+        return capabilities
+
+    def _nm_capabilities_changed(self, *args):
+        nm_capabilities = self.nm_client.get_capabilities()
+        log.debug("NeworkManager capabilities changed to %s", nm_capabilities)
+        self.set_capabilities(self._get_capabilities_from_nm(nm_capabilities))
 
     @staticmethod
     def _nm_state_connected(state):
@@ -612,6 +669,7 @@ class NetworkService(KickstartService):
         supported_devices = [dev_info.device_name for dev_info in self.get_supported_devices()]
         task = ApplyKickstartTask(self._original_network_data,
                                   supported_devices,
+                                  self.capabilities,
                                   self.bootif,
                                   self.ifname_option_values)
         task.succeeded_signal.connect(lambda: self.log_task_result(task, check_result=True))

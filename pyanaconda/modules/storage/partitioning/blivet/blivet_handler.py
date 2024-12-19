@@ -18,6 +18,7 @@
 # Red Hat, Inc.
 #
 import pickle
+
 from pyanaconda.modules.common.errors.storage import UnsupportedPartitioningError
 
 try:
@@ -27,7 +28,7 @@ try:
 except ImportError as e:
     raise UnsupportedPartitioningError("Missing support for Blivet-GUI") from e
 
-__all__ = ["BlivetStorageHandler", "BlivetRequestHandler"]
+__all__ = ["BlivetRequestHandler", "BlivetStorageHandler"]
 
 
 class BlivetStorageHandler(BlivetUtilsAnaconda):

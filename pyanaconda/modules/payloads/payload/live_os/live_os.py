@@ -17,15 +17,22 @@
 # License and may only be used or replicated with the express permission of
 # Red Hat, Inc.
 #
+from pyanaconda.anaconda_loggers import get_module_logger
 from pyanaconda.core.configuration.anaconda import conf
 from pyanaconda.modules.common.errors.payload import IncompatibleSourceError
-from pyanaconda.modules.payloads.constants import SourceType, PayloadType
-from pyanaconda.modules.payloads.payload.live_image.installation import InstallFromImageTask
+from pyanaconda.modules.payloads.constants import PayloadType, SourceType
+from pyanaconda.modules.payloads.payload.live_image.installation import (
+    InstallFromImageTask,
+)
+from pyanaconda.modules.payloads.payload.live_os.installation import (
+    CopyTransientGnomeInitialSetupStateTask,
+)
+from pyanaconda.modules.payloads.payload.live_os.live_os_interface import (
+    LiveOSInterface,
+)
 from pyanaconda.modules.payloads.payload.live_os.utils import get_kernel_version_list
 from pyanaconda.modules.payloads.payload.payload_base import PayloadBase
-from pyanaconda.modules.payloads.payload.live_os.live_os_interface import LiveOSInterface
 
-from pyanaconda.anaconda_loggers import get_module_logger
 log = get_module_logger(__name__)
 
 
@@ -62,20 +69,28 @@ class LiveOSModule(PayloadBase):
         """Install the payload with tasks."""
         image_source = self._get_source(SourceType.LIVE_OS_IMAGE)
 
+        tasks = []
+
         if not image_source:
             log.debug("No Live OS image is available.")
             return []
 
-        task = InstallFromImageTask(
+        install_task = InstallFromImageTask(
             sysroot=conf.target.system_root,
             mount_point=image_source.mount_point
         )
 
-        task.succeeded_signal.connect(
+        install_task.succeeded_signal.connect(
             lambda: self._update_kernel_version_list(image_source)
         )
 
-        return [task]
+        tasks += [install_task]
+
+        tasks += [CopyTransientGnomeInitialSetupStateTask(
+            sysroot=conf.target.system_root,
+        )]
+
+        return tasks
 
     def _update_kernel_version_list(self, image_source):
         """Update the kernel versions list."""

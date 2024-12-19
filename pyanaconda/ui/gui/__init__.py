@@ -16,41 +16,47 @@
 # License and may only be used or replicated with the express permission of
 # Red Hat, Inc.
 #
-import inspect, os, sys, site
-import meh.ui.gui
-
+import inspect
+import os
+import site
+import sys
 from contextlib import contextmanager
 
 import gi
+import meh.ui.gui
+
 gi.require_version("Gdk", "3.0")
 gi.require_version("Gtk", "3.0")
 gi.require_version("AnacondaWidgets", "3.4")
-gi.require_version("Keybinder", "3.0")
 gi.require_version("GdkPixbuf", "2.0")
 gi.require_version("GObject", "2.0")
+gi.require_version("GLib", "2.0")
 
-from gi.repository import Gdk, Gtk, AnacondaWidgets, Keybinder, GdkPixbuf, GObject
-
-from pyanaconda.flags import flags
-from pyanaconda.core.i18n import _, C_
-from pyanaconda.core.constants import WINDOW_TITLE_TEXT
-from pyanaconda.core.configuration.anaconda import conf
-from pyanaconda import product
-from pyanaconda.core import util, constants
-from pyanaconda.core.path import make_directories
-from pyanaconda.core.threads import thread_manager
-
-from pyanaconda.core.glib import Bytes, GError
-from pyanaconda.keyboard import can_configure_keyboard
-from pyanaconda.ui import UserInterface, common
-from pyanaconda.ui.gui.utils import unbusyCursor, really_hide
-from pyanaconda.core.async_utils import async_action_wait
-from pyanaconda.ui.gui.utils import watch_children, unwatch_children
-from pyanaconda.ui.gui.helpers import autoinstall_stopped
-from pyanaconda.ui.lib.help import show_graphical_help_for_screen
 import os.path
 
+from gi.repository import AnacondaWidgets, Gdk, GdkPixbuf, GLib, GObject, Gtk
+
 from pyanaconda.anaconda_loggers import get_module_logger
+from pyanaconda.core import constants, util
+from pyanaconda.core.async_utils import async_action_wait
+from pyanaconda.core.configuration.anaconda import conf
+from pyanaconda.core.constants import WINDOW_TITLE_TEXT
+from pyanaconda.core.glib import Bytes, GError
+from pyanaconda.core.i18n import C_, _
+from pyanaconda.core.product import get_product_is_final_release
+from pyanaconda.core.threads import thread_manager
+from pyanaconda.flags import flags
+from pyanaconda.keyboard import can_configure_keyboard
+from pyanaconda.ui import UserInterface, common
+from pyanaconda.ui.gui.helpers import autoinstall_stopped
+from pyanaconda.ui.gui.utils import (
+    really_hide,
+    unbusyCursor,
+    unwatch_children,
+    watch_children,
+)
+from pyanaconda.ui.helpers import get_distribution_text
+
 log = get_module_logger(__name__)
 
 __all__ = ["GraphicalUserInterface", "QuitDialog"]
@@ -103,10 +109,6 @@ class GUIObject(common.UIObject):
                            that use GUI elements (Hubs & Spokes) from Anaconda
                            can override the translation domain with their own,
                            so that their subclasses are properly translated.
-       helpFile         -- The location of the yelp-compatible help file for the
-                           given GUI object. The default value of "" indicates
-                           that the object has not specific help file assigned
-                           and the default help file should be used.
     """
     builderObjects = []
     mainWidgetName = None
@@ -292,6 +294,7 @@ class MainWindow(Gtk.Window):
         # Remove the title bar, resize controls and other stuff if the window manager
         # allows it and decorated is set to False. Otherwise, it has no effect.
         self.set_decorated(decorated)
+        self.set_titlebar(Gtk.DrawingArea())
 
         # Hide the titlebar when maximized if the window manager allows it.
         # This makes anaconda look full-screenish but without covering parts
@@ -351,18 +354,10 @@ class MainWindow(Gtk.Window):
 
         # Help button mnemonics handling
         self._mnemonic_signal = None
-        # we have a sensible initial value, just in case
-        self._saved_help_button_label = _("Help!")
 
         # Apply the initial language attributes
         self._language = None
         self.reapply_language()
-
-        # Keybinder from GI needs to be initialized before use
-        Keybinder.init()
-        Keybinder.bind("<Shift>Print", self._handle_print_screen, [])
-
-        self._screenshot_index = 0
 
     def _on_delete_event(self, widget, event, user_data=None):
         # Use the quit-clicked signal on the the current standalone, even if the
@@ -373,7 +368,7 @@ class MainWindow(Gtk.Window):
         # Stop the window from being closed here
         return True
 
-    def _on_overlay_get_child_position(self, overlay_container, overlayed_widget, allocation, user_data=None):
+    def _on_overlay_get_child_position(self, overlay_container, overlayed_widget, _allocation, user_data=None):
         overlay_allocation = overlay_container.get_allocation()
 
         # Scale the overlayed image's pixbuf to the size of the GtkOverlay
@@ -382,20 +377,6 @@ class MainWindow(Gtk.Window):
 
         # Return False to indicate that the child allocation is not yet set
         return False
-
-    def _on_mnemonics_visible_changed(self, window, property_type, obj):
-        # mnemonics display has been activated or deactivated,
-        # add or remove the F1 mnemonics display from the help button
-        help_button = obj.window.get_help_button()
-        if window.props.mnemonics_visible:
-            # save current label
-            old_label = help_button.get_label()
-            self._saved_help_button_label = old_label
-            # add the (F1) "mnemonics" to the help button
-            help_button.set_label("%s (F1)" % old_label)
-        else:
-            # restore the old label
-            help_button.set_label(self._saved_help_button_label)
 
     def _on_child_added(self, widget, user_data):
         # If this is GtkLabel, apply the language attribute
@@ -437,17 +418,6 @@ class MainWindow(Gtk.Window):
         elif isinstance(child.window, AnacondaWidgets.SpokeWindow):
             child.window.add_accelerator("button-clicked", self._accel_group,
                     Gdk.KEY_F12, 0, 0)
-
-        # Configure the help button
-        child.window.add_accelerator("help-button-clicked", self._accel_group,
-                Gdk.KEY_F1, 0, 0)
-        child.window.add_accelerator("help-button-clicked", self._accel_group,
-                Gdk.KEY_F1, Gdk.ModifierType.MOD1_MASK, 0)
-
-        # Connect to mnemonics-visible to add the (F1) mnemonic to the button label
-        if self._mnemonic_signal:
-            self.disconnect(self._mnemonic_signal)
-        self._mnemonic_signal = self.connect("notify::mnemonics-visible", self._on_mnemonics_visible_changed, child)
 
         self._stack.set_visible_child(child.window)
 
@@ -535,42 +505,17 @@ class MainWindow(Gtk.Window):
         self._language = os.environ["LANG"]
         watch_children(self, self._on_child_added, self._language)
 
-    def _handle_print_screen(self, *args, **kwargs):
-        self.take_screenshot()
-
-    def take_screenshot(self, name=None):
-        """Take a screenshot of the whole screen (works even with multiple displays).
-
-        :param name: optional name for the screenshot that will be appended to the filename,
-                     after the standard prefix & screenshot number
-        :type name: str or NoneType
-        """
-        # Make sure the screenshot directory exists.
-        make_directories(constants.SCREENSHOTS_DIRECTORY)
-
-        if name is None:
-            screenshot_filename = "screenshot-%04d.png" % self._screenshot_index
-        else:
-            screenshot_filename = "screenshot-%04d-%s.png" % (self._screenshot_index, name)
-
-        fn = os.path.join(constants.SCREENSHOTS_DIRECTORY, screenshot_filename)
-
-        root_window = self.current_window.get_window()
-        pixbuf = Gdk.pixbuf_get_from_window(root_window, 0, 0,
-                                            root_window.get_width(),
-                                            root_window.get_height())
-        pixbuf.savev(fn, 'png', [], [])
-        log.info("%s taken", screenshot_filename)
-        self._screenshot_index += 1
-
 
 class GraphicalUserInterface(UserInterface):
     """This is the standard GTK+ interface we try to steer everything to using.
-       It is suitable for use both directly and via VNC.
+       It is suitable for use both directly and via RDP.
     """
     def __init__(self, storage, payload,
-                 distributionText=product.distributionText, isFinal=product.isFinal,
-                 quitDialog=QuitDialog, gui_lock=None, fullscreen=False):
+                 distributionText=get_distribution_text,
+                 isFinal=get_product_is_final_release(),
+                 quitDialog=QuitDialog,
+                 gui_lock=None,
+                 fullscreen=False):
 
         super().__init__(storage, payload)
 
@@ -580,6 +525,8 @@ class GraphicalUserInterface(UserInterface):
 
         self.data = None
 
+        if conf.system.provides_liveuser:
+            GLib.set_prgname("liveinst")    # matches liveinst.desktop filename
         self.mainWindow = MainWindow(fullscreen=fullscreen, decorated=False)
 
         self._distributionText = distributionText
@@ -728,7 +675,6 @@ class GraphicalUserInterface(UserInterface):
 
         # Use connect_after so classes can add actions before we change screens
         obj.window.connect_after("continue-clicked", self._on_continue_clicked)
-        obj.window.connect_after("help-button-clicked", self._on_help_clicked, obj)
         obj.window.connect_after("quit-clicked", self._on_quit_clicked)
 
         return obj
@@ -936,12 +882,8 @@ class GraphicalUserInterface(UserInterface):
         self._currentAction = nextAction
         self._actions.pop(0)
 
-    def _on_help_clicked(self, window, obj):
-        # the help button has been clicked, start the yelp viewer with
-        # content for the current screen
-        show_graphical_help_for_screen(obj.get_screen_id())
+    def _on_quit_clicked(self, win, _userData=None):
 
-    def _on_quit_clicked(self, win, userData=None):
         if not win.get_quit_button():
             return
 

@@ -20,13 +20,12 @@ import time
 
 import dnf
 import dnf.callback
-
 from blivet.size import Size
 
-from pyanaconda.anaconda_loggers import get_packaging_logger
+from pyanaconda.anaconda_loggers import get_module_logger
 from pyanaconda.core.i18n import _
 
-log = get_packaging_logger()
+log = get_module_logger(__name__)
 
 __all__ = ["DownloadProgress"]
 
@@ -93,5 +92,6 @@ class DownloadProgress(dnf.callback.DownloadProgress):
         self._report_progress()
 
     def start(self, total_files, total_size, total_drpms=0):
+        del total_drpms
         self.total_files = total_files
         self.total_size = Size(total_size)

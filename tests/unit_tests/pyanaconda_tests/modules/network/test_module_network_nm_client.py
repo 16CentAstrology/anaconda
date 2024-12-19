@@ -17,26 +17,38 @@
 #
 # Red Hat Author(s): Radek Vykydal <rvykydal@redhat.com>
 #
-import unittest
-import pytest
-import time
 import threading
-from unittest.mock import Mock, patch, call
+import time
+import unittest
 from textwrap import dedent
-
-from pyanaconda.modules.network.nm_client import get_ports_from_connections, \
-    get_dracut_arguments_from_connection, get_config_file_connection_of_device, \
-    get_kickstart_network_data, NM_BRIDGE_DUMPED_SETTINGS_DEFAULTS, \
-    update_connection_wired_settings_from_ksdata, get_new_nm_client, GError, \
-    update_connection_ip_settings_from_ksdata
-from pyanaconda.core.kickstart.commands import NetworkData
-from pyanaconda.core.glib import MainContext, sync_call_glib
-from pyanaconda.modules.network.constants import NM_CONNECTION_TYPE_WIFI, \
-    NM_CONNECTION_TYPE_ETHERNET, NM_CONNECTION_TYPE_VLAN, NM_CONNECTION_TYPE_BOND, \
-    NM_CONNECTION_TYPE_TEAM, NM_CONNECTION_TYPE_BRIDGE, NM_CONNECTION_TYPE_INFINIBAND
-
+from unittest.mock import Mock, call, patch
 
 import gi
+import pytest
+
+from pyanaconda.core.glib import MainContext, sync_call_glib
+from pyanaconda.core.kickstart.commands import NetworkData
+from pyanaconda.modules.network.constants import (
+    NM_CONNECTION_TYPE_BOND,
+    NM_CONNECTION_TYPE_BRIDGE,
+    NM_CONNECTION_TYPE_ETHERNET,
+    NM_CONNECTION_TYPE_INFINIBAND,
+    NM_CONNECTION_TYPE_TEAM,
+    NM_CONNECTION_TYPE_VLAN,
+    NM_CONNECTION_TYPE_WIFI,
+)
+from pyanaconda.modules.network.nm_client import (
+    NM_BRIDGE_DUMPED_SETTINGS_DEFAULTS,
+    GError,
+    get_config_file_connection_of_device,
+    get_dracut_arguments_from_connection,
+    get_kickstart_network_data,
+    get_new_nm_client,
+    get_ports_from_connections,
+    update_connection_ip_settings_from_ksdata,
+    update_connection_wired_settings_from_ksdata,
+)
+
 gi.require_version("NM", "1.0")
 gi.require_version("Gio", "2.0")
 from gi.repository import NM, Gio
@@ -70,26 +82,26 @@ class NMClientTestCase(unittest.TestCase):
 
         cons_specs = [
             {
-                "get_setting_connection.return_value.get_slave_type.return_value": "",
-                "get_setting_connection.return_value.get_master.return_value": "",
+                "get_setting_connection.return_value.get_port_type.return_value": "",
+                "get_setting_connection.return_value.get_controller.return_value": "",
                 "get_id.return_value": "ens3",
                 "get_uuid.return_value": ENS3_UUID,
             },
             {
-                "get_setting_connection.return_value.get_slave_type.return_value": "team",
-                "get_setting_connection.return_value.get_master.return_value": "team0",
+                "get_setting_connection.return_value.get_port_type.return_value": "team",
+                "get_setting_connection.return_value.get_controller.return_value": "team0",
                 "get_id.return_value": "team_0_slave_1",
                 "get_uuid.return_value": ENS7_UUID,
             },
             {
-                "get_setting_connection.return_value.get_slave_type.return_value": "team",
-                "get_setting_connection.return_value.get_master.return_value": "team0",
+                "get_setting_connection.return_value.get_port_type.return_value": "team",
+                "get_setting_connection.return_value.get_controller.return_value": "team0",
                 "get_id.return_value": "team_0_slave_2",
                 "get_uuid.return_value": ENS8_UUID,
             },
             {
-                "get_setting_connection.return_value.get_slave_type.return_value": "team",
-                "get_setting_connection.return_value.get_master.return_value": TEAM1_UUID,
+                "get_setting_connection.return_value.get_port_type.return_value": "team",
+                "get_setting_connection.return_value.get_controller.return_value": TEAM1_UUID,
                 "get_id.return_value": "ens11",
                 "get_uuid.return_value": ENS11_UUID,
             },
@@ -116,17 +128,20 @@ class NMClientTestCase(unittest.TestCase):
         assert get_ports_from_connections(nm_client, "team", [TEAM1_UUID]) == \
             set([("ens11", "ens11", ENS11_UUID)])
 
+    @patch("pyanaconda.modules.network.nm_client._get_dracut_znet_argument_from_connection")
     @patch("pyanaconda.modules.network.nm_client.get_connections_available_for_iface")
     @patch("pyanaconda.modules.network.nm_client.get_ports_from_connections")
     @patch("pyanaconda.modules.network.nm_client.is_s390")
     def test_get_dracut_arguments_from_connection(self, is_s390, get_ports_from_connections_mock,
-                                                  get_connections_available_for_iface):
+                                                  get_connections_available_for_iface,
+                                                  _get_dracut_znet_argument_from_connection):
         nm_client = Mock()
 
         CON_UUID = "44755f4c-ee12-45b4-ba5e-e10f83de51af"
 
         # IPv4 config auto, IPv6 config auto, mac address specified
         is_s390.return_value = False
+        _get_dracut_znet_argument_from_connection.return_value = ""
         ip4_config_attrs = {
             "get_method.return_value": NM.SETTING_IP4_CONFIG_METHOD_AUTO,
         }
@@ -162,6 +177,8 @@ class NMClientTestCase(unittest.TestCase):
 
         # IPv4 config static, mac address not specified, s390
         is_s390.return_value = True
+        _get_dracut_znet_argument_from_connection.return_value = \
+            "rd.znet=qeth,0.0.0900,0.0.0901,0.0.0902,layer2=1,portname=FOOBAR,portno=0"
         address_attrs = {
             "get_address.return_value": "10.34.39.44",
             "get_prefix.return_value": 24,
@@ -176,11 +193,6 @@ class NMClientTestCase(unittest.TestCase):
         ip4_config = self._get_mock_objects_from_attrs([ip4_config_attrs])[0]
         wired_setting_attrs = {
             "get_mac_address.return_value": None,
-            "get_s390_nettype.return_value": "qeth",
-            "get_s390_subchannels.return_value": ["0.0.0900", "0.0.0901", "0.0.0902"],
-            "get_property.return_value": {"layer2": "1",
-                                          "portname": "FOOBAR",
-                                          "portno": "0"},
         }
         wired_setting = self._get_mock_objects_from_attrs([wired_setting_attrs])[0]
         cons_attrs = [
@@ -199,6 +211,7 @@ class NMClientTestCase(unittest.TestCase):
 
         # IPv6 config dhcp
         is_s390.return_value = False
+        _get_dracut_znet_argument_from_connection.return_value = ""
         ip6_config_attrs = {
             "get_method.return_value": NM.SETTING_IP6_CONFIG_METHOD_DHCP,
         }
@@ -222,6 +235,7 @@ class NMClientTestCase(unittest.TestCase):
 
         # IPv6 config manual
         is_s390.return_value = False
+        _get_dracut_znet_argument_from_connection.return_value = ""
         address_attrs = {
             "get_address.return_value": "2001::5",
             "get_prefix.return_value": 64,
@@ -253,6 +267,7 @@ class NMClientTestCase(unittest.TestCase):
 
         # IPv4 config auto, team
         is_s390.return_value = False
+        _get_dracut_znet_argument_from_connection.return_value = ""
         ip4_config_attrs = {
             "get_method.return_value": NM.SETTING_IP4_CONFIG_METHOD_AUTO,
         }
@@ -279,6 +294,8 @@ class NMClientTestCase(unittest.TestCase):
 
         # IPv4 config auto, vlan, s390, parent specified by interface name
         is_s390.return_value = True
+        _get_dracut_znet_argument_from_connection.return_value = \
+            "rd.znet=qeth,0.0.0900,0.0.0901,0.0.0902,layer2=1,portname=FOOBAR,portno=0"
         ip4_config_attrs = {
             "get_method.return_value": NM.SETTING_IP4_CONFIG_METHOD_AUTO,
         }
@@ -300,11 +317,6 @@ class NMClientTestCase(unittest.TestCase):
         # Mock parent connection
         wired_setting_attrs = {
             "get_mac_address.return_value": None,
-            "get_s390_nettype.return_value": "qeth",
-            "get_s390_subchannels.return_value": ["0.0.0900", "0.0.0901", "0.0.0902"],
-            "get_property.return_value": {"layer2": "1",
-                                          "portname": "FOOBAR",
-                                          "portno": "0"},
         }
         wired_setting = self._get_mock_objects_from_attrs([wired_setting_attrs])[0]
         parent_cons_attrs = [
@@ -326,6 +338,7 @@ class NMClientTestCase(unittest.TestCase):
         # IPv4 config auto, vlan, parent specified by connection uuid
         VLAN_PARENT_UUID = "5e6ead30-d133-4c8c-ba59-818c5ced6a7c"
         is_s390.return_value = False
+        _get_dracut_znet_argument_from_connection.return_value = ""
         ip4_config_attrs = {
             "get_method.return_value": NM.SETTING_IP4_CONFIG_METHOD_AUTO,
         }
@@ -361,6 +374,8 @@ class NMClientTestCase(unittest.TestCase):
         # IPv4 config auto, vlan, parent specified by connection uuid, s390 (we
         # need the parent connection in s390 case, not only parent iface)
         is_s390.return_value = True
+        _get_dracut_znet_argument_from_connection.return_value = \
+            "rd.znet=qeth,0.0.0900,0.0.0901,0.0.0902,layer2=1,portname=FOOBAR,portno=0"
         ip4_config_attrs = {
             "get_method.return_value": NM.SETTING_IP4_CONFIG_METHOD_AUTO,
         }
@@ -382,11 +397,6 @@ class NMClientTestCase(unittest.TestCase):
         # Mock parent connection
         wired_setting_attrs = {
             "get_mac_address.return_value": None,
-            "get_s390_nettype.return_value": "qeth",
-            "get_s390_subchannels.return_value": ["0.0.0900", "0.0.0901", "0.0.0902"],
-            "get_property.return_value": {"layer2": "1",
-                                          "portname": "FOOBAR",
-                                          "portno": "0"},
         }
         wired_setting = self._get_mock_objects_from_attrs([wired_setting_attrs])[0]
         parent_cons_attrs = [
@@ -444,13 +454,13 @@ class NMClientTestCase(unittest.TestCase):
                 "get_connection_type.return_value": NM_CONNECTION_TYPE_ETHERNET,
                 "get_interface_name.return_value": "ens3",
                 "get_setting_wired.return_value.get_mac_address.return_value": None,
-                "get_setting_connection.return_value.get_master.return_value": None,
+                "get_setting_connection.return_value.get_controller.return_value": None,
                 "get_uuid.return_value": ENS3_UUID,
             },
             {
                 "get_connection_type.return_value": NM_CONNECTION_TYPE_ETHERNET,
                 "get_setting_wired.return_value.get_mac_address.return_value": HWADDR_ENS3,
-                "get_setting_connection.return_value.get_master.return_value": None,
+                "get_setting_connection.return_value.get_controller.return_value": None,
                 "get_interface_name.return_value": None,
                 "get_uuid.return_value": ENS3_UUID2,
             },
@@ -458,19 +468,19 @@ class NMClientTestCase(unittest.TestCase):
                 "get_connection_type.return_value": NM_CONNECTION_TYPE_ETHERNET,
                 "get_interface_name.return_value": "ens7",
                 "get_setting_wired.return_value.get_mac_address.return_value": None,
-                "get_setting_connection.return_value.get_master.return_value": "team0",
+                "get_setting_connection.return_value.get_controller.return_value": "team0",
                 "get_uuid.return_value": ENS7_SLAVE_UUID,
             },
             {
                 "get_connection_type.return_value": NM_CONNECTION_TYPE_ETHERNET,
                 "get_interface_name.return_value": "ens7",
-                "get_setting_connection.return_value.get_master.return_value": None,
+                "get_setting_connection.return_value.get_controller.return_value": None,
                 "get_setting_wired.return_value.get_mac_address.return_value": None,
                 "get_uuid.return_value": ENS7_UUID,
             },
             {
                 "get_connection_type.return_value": NM_CONNECTION_TYPE_ETHERNET,
-                "get_setting_connection.return_value.get_master.return_value": None,
+                "get_setting_connection.return_value.get_controller.return_value": None,
                 "get_setting_wired.return_value.get_mac_address.return_value": HWADDR_ENS8,
                 "get_interface_name.return_value": None,
                 "get_uuid.return_value": ENS8_UUID,
@@ -479,19 +489,19 @@ class NMClientTestCase(unittest.TestCase):
                 "get_connection_type.return_value": NM_CONNECTION_TYPE_ETHERNET,
                 "get_interface_name.return_value": "ens9",
                 "get_setting_wired.return_value.get_mac_address.return_value": None,
-                "get_setting_connection.return_value.get_master.return_value": "team0",
+                "get_setting_connection.return_value.get_controller.return_value": "team0",
                 "get_uuid.return_value": ENS9_SLAVE_UUID,
             },
             {
                 "get_connection_type.return_value": NM_CONNECTION_TYPE_ETHERNET,
-                "get_setting_connection.return_value.get_master.return_value": None,
+                "get_setting_connection.return_value.get_controller.return_value": None,
                 "get_setting_wired.return_value.get_mac_address.return_value": HWADDR_ENS11,
                 "get_interface_name.return_value": None,
                 "get_uuid.return_value": ENS11_UUID,
             },
             {
                 "get_connection_type.return_value": NM_CONNECTION_TYPE_ETHERNET,
-                "get_setting_connection.return_value.get_master.return_value": None,
+                "get_setting_connection.return_value.get_controller.return_value": None,
                 "get_setting_wired.return_value.get_mac_address.return_value": None,
                 "get_interface_name.return_value": None,
                 "get_id.return_value": "ens12",
@@ -668,7 +678,7 @@ class NMClientTestCase(unittest.TestCase):
         cons_to_test = [
          ([{
             "get_connection_type.return_value": NM_CONNECTION_TYPE_ETHERNET,
-            "get_setting_connection.return_value.get_master.return_value": "team0",
+            "get_setting_connection.return_value.get_controller.return_value": "team0",
             "get_interface_name.return_value": "ens3",
           }],
           ""),
@@ -680,7 +690,7 @@ class NMClientTestCase(unittest.TestCase):
          ([{
             "get_connection_type.return_value": NM_CONNECTION_TYPE_ETHERNET,
             "get_setting_connection.return_value.get_autoconnect.return_value": True,
-            "get_setting_connection.return_value.get_master.return_value": None,
+            "get_setting_connection.return_value.get_controller.return_value": None,
             "get_setting_wired.return_value.get_mtu.return_value": 1500,
             "get_uuid.return_value": ENS3_UUID,
             "get_setting_ip4_config.return_value.get_method.return_value": NM.SETTING_IP4_CONFIG_METHOD_AUTO,
@@ -689,18 +699,19 @@ class NMClientTestCase(unittest.TestCase):
             "get_setting_ip4_config.return_value.get_ignore_auto_dns.return_value": False,
             "get_setting_ip4_config.return_value.get_num_dns_searches.return_value": 0,
             "get_setting_ip4_config.return_value.get_dns_search.return_value": "",
+            "get_setting_ip4_config.return_value.get_dhcp_vendor_class_identifier.return_value": "RHEL",
             "get_setting_ip6_config.return_value.get_num_dns.return_value": 0,
             "get_setting_ip6_config.return_value.get_method.return_value": NM.SETTING_IP6_CONFIG_METHOD_AUTO,
             "get_setting_ip6_config.return_value.get_ignore_auto_dns.return_value": False,
             "get_setting_ip6_config.return_value.get_num_dns_searches.return_value": 0,
             "get_setting_ip6_config.return_value.get_dns_search.return_value": "",
          }],
-          "network  --bootproto=dhcp --device=ens3 --mtu=1500 --ipv6=auto"),
+          "network  --bootproto=dhcp --dhcpclass=RHEL --device=ens3 --mtu=1500 --ipv6=auto"),
          # dhcp-hostname setting the hostname is debatable and should be reviewed
          ([{
             "get_connection_type.return_value": NM_CONNECTION_TYPE_ETHERNET,
             "get_setting_connection.return_value.get_autoconnect.return_value": True,
-            "get_setting_connection.return_value.get_master.return_value": None,
+            "get_setting_connection.return_value.get_controller.return_value": None,
             "get_setting_wired.return_value.get_mtu.return_value": None,
             "get_uuid.return_value": ENS3_UUID,
             "get_setting_ip4_config.return_value.get_method.return_value": NM.SETTING_IP4_CONFIG_METHOD_AUTO,
@@ -709,6 +720,7 @@ class NMClientTestCase(unittest.TestCase):
             "get_setting_ip4_config.return_value.get_ignore_auto_dns.return_value": False,
             "get_setting_ip4_config.return_value.get_num_dns_searches.return_value": 0,
             "get_setting_ip4_config.return_value.get_dns_search.return_value": "",
+            "get_setting_ip4_config.return_value.get_dhcp_vendor_class_identifier.return_value": None,
             "get_setting_ip6_config.return_value.get_num_dns.return_value": 0,
             "get_setting_ip6_config.return_value.get_method.return_value": NM.SETTING_IP6_CONFIG_METHOD_DHCP,
             "get_setting_ip6_config.return_value.get_ignore_auto_dns.return_value": False,
@@ -719,7 +731,7 @@ class NMClientTestCase(unittest.TestCase):
          ([{
             "get_connection_type.return_value": NM_CONNECTION_TYPE_ETHERNET,
             "get_setting_connection.return_value.get_autoconnect.return_value": False,
-            "get_setting_connection.return_value.get_master.return_value": None,
+            "get_setting_connection.return_value.get_controller.return_value": None,
             "get_uuid.return_value": ENS7_UUID,
             "get_setting_wired.return_value.get_mtu.return_value": None,
             "get_setting_ip4_config.return_value.get_method.return_value": NM.SETTING_IP4_CONFIG_METHOD_MANUAL,
@@ -732,6 +744,7 @@ class NMClientTestCase(unittest.TestCase):
             "get_setting_ip4_config.return_value.get_ignore_auto_dns.return_value": False,
             "get_setting_ip4_config.return_value.get_num_dns_searches.return_value": 0,
             "get_setting_ip4_config.return_value.get_dns_search.return_value": "",
+            "get_setting_ip4_config.return_value.get_dhcp_vendor_class_identifier.return_value": None,
             "get_setting_ip6_config.return_value.get_num_dns.return_value": 0,
             "get_setting_ip6_config.return_value.get_method.return_value": NM.SETTING_IP6_CONFIG_METHOD_DISABLED,
             "get_setting_ip6_config.return_value.get_ignore_auto_dns.return_value": False,
@@ -742,7 +755,7 @@ class NMClientTestCase(unittest.TestCase):
          ([{
             "get_connection_type.return_value": NM_CONNECTION_TYPE_ETHERNET,
             "get_setting_connection.return_value.get_autoconnect.return_value": True,
-            "get_setting_connection.return_value.get_master.return_value": None,
+            "get_setting_connection.return_value.get_controller.return_value": None,
             "get_uuid.return_value": ENS7_UUID,
             "get_setting_wired.return_value.get_mtu.return_value": None,
             "get_setting_ip4_config.return_value.get_dhcp_hostname.return_value": None,
@@ -752,6 +765,7 @@ class NMClientTestCase(unittest.TestCase):
             "get_setting_ip4_config.return_value.get_ignore_auto_dns.return_value": False,
             "get_setting_ip4_config.return_value.get_num_dns_searches.return_value": 0,
             "get_setting_ip4_config.return_value.get_dns_search.return_value": "",
+            "get_setting_ip4_config.return_value.get_dhcp_vendor_class_identifier.return_value": None,
             "get_setting_ip6_config.return_value.get_num_addresses.return_value": 1,
             "get_setting_ip6_config.return_value.get_address.side_effect": lambda i: ip6_addr_1,
             "get_setting_ip6_config.return_value.get_num_dns.return_value": 2,
@@ -766,7 +780,7 @@ class NMClientTestCase(unittest.TestCase):
          ([{
             "get_connection_type.return_value": NM_CONNECTION_TYPE_BOND,
             "get_setting_connection.return_value.get_autoconnect.return_value": True,
-            "get_setting_connection.return_value.get_master.return_value": None,
+            "get_setting_connection.return_value.get_controller.return_value": None,
             "get_uuid.return_value": BOND0_UUID,
             "get_setting_wired.return_value.get_mtu.return_value": None,
             "get_setting_ip4_config.return_value.get_num_dns.return_value": 0,
@@ -775,6 +789,7 @@ class NMClientTestCase(unittest.TestCase):
             "get_setting_ip4_config.return_value.get_ignore_auto_dns.return_value": False,
             "get_setting_ip4_config.return_value.get_num_dns_searches.return_value": 0,
             "get_setting_ip4_config.return_value.get_dns_search.return_value": "",
+            "get_setting_ip4_config.return_value.get_dhcp_vendor_class_identifier.return_value": None,
             "get_setting_ip6_config.return_value.get_num_dns.return_value": 0,
             "get_setting_ip6_config.return_value.get_method.return_value": NM.SETTING_IP6_CONFIG_METHOD_AUTO,
             "get_setting_ip6_config.return_value.get_ignore_auto_dns.return_value": False,
@@ -787,7 +802,7 @@ class NMClientTestCase(unittest.TestCase):
          ([{
             "get_connection_type.return_value": NM_CONNECTION_TYPE_BRIDGE,
             "get_setting_connection.return_value.get_autoconnect.return_value": False,
-            "get_setting_connection.return_value.get_master.return_value": None,
+            "get_setting_connection.return_value.get_controller.return_value": None,
             "get_uuid.return_value": BRIDGE0_UUID,
             "get_setting_wired.return_value.get_mtu.return_value": None,
             "get_setting_ip4_config.return_value.get_num_dns.return_value": 0,
@@ -796,6 +811,7 @@ class NMClientTestCase(unittest.TestCase):
             "get_setting_ip4_config.return_value.get_ignore_auto_dns.return_value": False,
             "get_setting_ip4_config.return_value.get_num_dns_searches.return_value": 0,
             "get_setting_ip4_config.return_value.get_dns_search.return_value": "",
+            "get_setting_ip4_config.return_value.get_dhcp_vendor_class_identifier.return_value": None,
             "get_setting_ip6_config.return_value.get_num_dns.return_value": 0,
             "get_setting_ip6_config.return_value.get_method.return_value": NM.SETTING_IP6_CONFIG_METHOD_AUTO,
             "get_setting_ip6_config.return_value.get_ignore_auto_dns.return_value": False,
@@ -807,7 +823,7 @@ class NMClientTestCase(unittest.TestCase):
          ([{
             "get_connection_type.return_value": NM_CONNECTION_TYPE_TEAM,
             "get_setting_connection.return_value.get_autoconnect.return_value": True,
-            "get_setting_connection.return_value.get_master.return_value": None,
+            "get_setting_connection.return_value.get_controller.return_value": None,
             "get_uuid.return_value": TEAM0_UUID,
             "get_setting_wired.return_value.get_mtu.return_value": None,
             "get_setting_ip4_config.return_value.get_num_dns.return_value": 0,
@@ -816,6 +832,7 @@ class NMClientTestCase(unittest.TestCase):
             "get_setting_ip4_config.return_value.get_ignore_auto_dns.return_value": False,
             "get_setting_ip4_config.return_value.get_num_dns_searches.return_value": 0,
             "get_setting_ip4_config.return_value.get_dns_search.return_value": "",
+            "get_setting_ip4_config.return_value.get_dhcp_vendor_class_identifier.return_value": None,
             "get_setting_ip6_config.return_value.get_num_dns.return_value": 0,
             "get_setting_ip6_config.return_value.get_method.return_value": NM.SETTING_IP6_CONFIG_METHOD_AUTO,
             "get_setting_ip6_config.return_value.get_ignore_auto_dns.return_value": False,
@@ -829,7 +846,7 @@ class NMClientTestCase(unittest.TestCase):
             "get_connection_type.return_value": NM_CONNECTION_TYPE_VLAN,
             "get_setting_connection.return_value.get_interface_name.return_value": "vlan233",
             "get_setting_connection.return_value.get_autoconnect.return_value": True,
-            "get_setting_connection.return_value.get_master.return_value": None,
+            "get_setting_connection.return_value.get_controller.return_value": None,
             "get_uuid.return_value": VLAN223_UUID,
             "get_setting_wired.return_value.get_mtu.return_value": None,
             "get_setting_ip4_config.return_value.get_num_dns.return_value": 0,
@@ -838,6 +855,7 @@ class NMClientTestCase(unittest.TestCase):
             "get_setting_ip4_config.return_value.get_ignore_auto_dns.return_value": False,
             "get_setting_ip4_config.return_value.get_num_dns_searches.return_value": 0,
             "get_setting_ip4_config.return_value.get_dns_search.return_value": "",
+            "get_setting_ip4_config.return_value.get_dhcp_vendor_class_identifier.return_value": None,
             "get_setting_ip6_config.return_value.get_num_dns.return_value": 0,
             "get_setting_ip6_config.return_value.get_method.return_value": NM.SETTING_IP6_CONFIG_METHOD_AUTO,
             "get_setting_ip6_config.return_value.get_ignore_auto_dns.return_value": False,
@@ -852,7 +870,7 @@ class NMClientTestCase(unittest.TestCase):
             "get_connection_type.return_value": NM_CONNECTION_TYPE_VLAN,
             "get_setting_connection.return_value.get_interface_name.return_value": "vlan233",
             "get_setting_connection.return_value.get_autoconnect.return_value": True,
-            "get_setting_connection.return_value.get_master.return_value": None,
+            "get_setting_connection.return_value.get_controller.return_value": None,
             "get_uuid.return_value": VLAN223_UUID,
             "get_setting_wired.return_value.get_mtu.return_value": None,
             "get_setting_ip4_config.return_value.get_num_dns.return_value": 0,
@@ -861,6 +879,7 @@ class NMClientTestCase(unittest.TestCase):
             "get_setting_ip4_config.return_value.get_ignore_auto_dns.return_value": False,
             "get_setting_ip4_config.return_value.get_num_dns_searches.return_value": 0,
             "get_setting_ip4_config.return_value.get_dns_search.return_value": "",
+            "get_setting_ip4_config.return_value.get_dhcp_vendor_class_identifier.return_value": None,
             "get_setting_ip6_config.return_value.get_num_dns.return_value": 0,
             "get_setting_ip6_config.return_value.get_method.return_value": NM.SETTING_IP6_CONFIG_METHOD_AUTO,
             "get_setting_ip6_config.return_value.get_ignore_auto_dns.return_value": False,
@@ -875,7 +894,7 @@ class NMClientTestCase(unittest.TestCase):
             "get_connection_type.return_value": NM_CONNECTION_TYPE_VLAN,
             "get_setting_connection.return_value.get_interface_name.return_value": None,
             "get_setting_connection.return_value.get_autoconnect.return_value": True,
-            "get_setting_connection.return_value.get_master.return_value": None,
+            "get_setting_connection.return_value.get_controller.return_value": None,
             "get_uuid.return_value": VLAN223_UUID,
             "get_setting_wired.return_value.get_mtu.return_value": None,
             "get_setting_ip4_config.return_value.get_num_dns.return_value": 0,
@@ -884,6 +903,7 @@ class NMClientTestCase(unittest.TestCase):
             "get_setting_ip4_config.return_value.get_ignore_auto_dns.return_value": False,
             "get_setting_ip4_config.return_value.get_num_dns_searches.return_value": 0,
             "get_setting_ip4_config.return_value.get_dns_search.return_value": "",
+            "get_setting_ip4_config.return_value.get_dhcp_vendor_class_identifier.return_value": None,
             "get_setting_ip6_config.return_value.get_num_dns.return_value": 0,
             "get_setting_ip6_config.return_value.get_method.return_value": NM.SETTING_IP6_CONFIG_METHOD_AUTO,
             "get_setting_ip6_config.return_value.get_ignore_auto_dns.return_value": False,
@@ -899,7 +919,7 @@ class NMClientTestCase(unittest.TestCase):
          ([{
             "get_connection_type.return_value": NM_CONNECTION_TYPE_BOND,
             "get_setting_connection.return_value.get_autoconnect.return_value": True,
-            "get_setting_connection.return_value.get_master.return_value": "bridge1",
+            "get_setting_connection.return_value.get_controller.return_value": "bridge1",
             "get_uuid.return_value": BOND0_UUID,
             "get_setting_wired.return_value.get_mtu.return_value": None,
             "get_setting_ip4_config.return_value": None,
@@ -911,7 +931,7 @@ class NMClientTestCase(unittest.TestCase):
          ([{
             "get_connection_type.return_value": NM_CONNECTION_TYPE_ETHERNET,
             "get_setting_connection.return_value.get_autoconnect.return_value": True,
-            "get_setting_connection.return_value.get_master.return_value": None,
+            "get_setting_connection.return_value.get_controller.return_value": None,
             "get_uuid.return_value": ENS3_UUID,
             "get_setting_wired.return_value.get_mtu.return_value": None,
             "get_setting_ip4_config.return_value.get_method.return_value": NM.SETTING_IP4_CONFIG_METHOD_AUTO,
@@ -920,6 +940,7 @@ class NMClientTestCase(unittest.TestCase):
             "get_setting_ip4_config.return_value.get_ignore_auto_dns.return_value": True,
             "get_setting_ip4_config.return_value.get_num_dns_searches.return_value": 1,
             "get_setting_ip4_config.return_value.get_dns_search.return_value": "fedoraproject.org",
+            "get_setting_ip4_config.return_value.get_dhcp_vendor_class_identifier.return_value": None,
             "get_setting_ip6_config.return_value.get_num_dns.return_value": 0,
             "get_setting_ip6_config.return_value.get_method.return_value": NM.SETTING_IP6_CONFIG_METHOD_AUTO,
             "get_setting_ip6_config.return_value.get_ignore_auto_dns.return_value": True,
@@ -1019,11 +1040,11 @@ class NMClientTestCase(unittest.TestCase):
             flags,
             io_priority
         )
-        assert result.succeeded == True
-        assert result.failed == False
+        assert result.succeeded is True
+        assert result.failed is False
         assert result.error_message == ""
         assert result.received_data.get_name() == filename
-        assert result.timeout == False
+        assert result.timeout is False
 
         # Test run with error
         filepath = "/nowaythiscanbeonyourfilesystem"
@@ -1037,11 +1058,11 @@ class NMClientTestCase(unittest.TestCase):
             flags,
             io_priority
         )
-        assert result.succeeded == False
-        assert result.failed == True
+        assert result.succeeded is False
+        assert result.failed is True
         assert result.error_message != ""
-        assert result.received_data == None
-        assert result.timeout == False
+        assert result.received_data is None
+        assert result.timeout is False
 
         # Test timeout
         delay = timeout + 1
@@ -1075,10 +1096,10 @@ class NMClientTestCase(unittest.TestCase):
             io_priority
         )
 
-        assert result.succeeded == False
+        assert result.succeeded is False
         assert result.error_message == "g-io-error-quark: Operation was cancelled (19)"
-        assert result.received_data == None
-        assert result.timeout == True
+        assert result.received_data is None
+        assert result.timeout is True
 
         mainctx.pop_thread_default()
 

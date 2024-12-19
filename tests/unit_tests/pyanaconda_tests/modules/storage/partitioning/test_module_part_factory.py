@@ -18,13 +18,16 @@
 # Red Hat Author(s): Vendula Poncova <vponcova@redhat.com>
 #
 import unittest
+from unittest.mock import PropertyMock, patch
+
 import pytest
-
-from unittest.mock import patch, PropertyMock
-
 from blivet.formats.fs import BTRFS
-from pyanaconda.core.kickstart.specification import KickstartSpecificationHandler, \
-    KickstartSpecificationParser
+from pykickstart.base import RemovedCommand
+
+from pyanaconda.core.kickstart.specification import (
+    KickstartSpecificationHandler,
+    KickstartSpecificationParser,
+)
 from pyanaconda.modules.storage.kickstart import StorageKickstartSpecification
 from pyanaconda.modules.storage.partitioning.base import PartitioningModule
 from pyanaconda.modules.storage.partitioning.base_interface import PartitioningInterface
@@ -83,10 +86,11 @@ class PartitioningFactoryTestCase(unittest.TestCase):
             PartitioningMethod.CUSTOM,
             "raid / --level=1 --device=0 raid.01 raid.02"
         )
-        self._check_method(
-            PartitioningMethod.CUSTOM,
-            "btrfs / --subvol --name=root fedora-btrfs"
-        )
+        if not isinstance(StorageKickstartSpecification.commands["btrfs"](), RemovedCommand):
+            self._check_method(
+                PartitioningMethod.CUSTOM,
+                "btrfs / --subvol --name=root fedora-btrfs"
+            )
         self._check_method(
             None,
             ""

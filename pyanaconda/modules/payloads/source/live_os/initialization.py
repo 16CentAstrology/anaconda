@@ -17,17 +17,18 @@
 #
 import os
 import stat
-import blivet.util
-
 from collections import namedtuple
+
+import blivet.util
 from blivet.size import Size
+
 from pyanaconda.anaconda_loggers import get_module_logger
 from pyanaconda.core.util import execWithCapture
-from pyanaconda.modules.common.task import Task
 from pyanaconda.modules.common.constants.objects import DEVICE_TREE
 from pyanaconda.modules.common.constants.services import STORAGE
 from pyanaconda.modules.common.errors.payload import SourceSetupError
 from pyanaconda.modules.common.structures.storage import DeviceData
+from pyanaconda.modules.common.task import Task
 from pyanaconda.modules.payloads.source.mount_tasks import SetUpMountTask
 
 log = get_module_logger(__name__)
@@ -108,11 +109,37 @@ class SetUpLiveOSSourceTask(SetUpMountTask):
         return SetupLiveOSResult(required_space=required_space)
 
     def _calculate_required_space(self):
-        """Calculate size of the live image image."""
-        source = os.statvfs(self._target_mount)
-        required_space = source.f_frsize * (source.f_blocks - source.f_bfree)
-        log.debug("Required space: %s", Size(required_space))
-        return required_space
+        """
+        Calculate the disk space required for the live OS by summing up
+        the size of relevant directories using 'du -s'.
+        """
+        exclude_patterns = [
+            "/dev/",
+            "/proc/",
+            "/tmp/*",
+            "/sys/",
+            "/run/",
+            "/boot/*rescue*",
+            "/boot/loader/",
+            "/boot/efi/loader/",
+            "/etc/machine-id",
+            "/etc/machine-info"
+        ]
+
+        # Build the `du` command
+        du_cmd_args = ["--bytes", "--summarize", self._target_mount]
+        for pattern in exclude_patterns:
+            du_cmd_args.extend(["--exclude", f"{self._target_mount}{pattern}"])
+
+        try:
+            # Execute the `du` command
+            result = execWithCapture("du", du_cmd_args)
+            # Parse the output for the total size
+            required_space = result.split()[0]  # First column is the total
+            log.debug("Required space: %s", Size(required_space))
+            return int(required_space)
+        except (OSError, FileNotFoundError) as e:
+            raise SourceSetupError(str(e)) from e
 
     @property
     def name(self):
@@ -132,14 +159,14 @@ class SetUpLiveOSSourceTask(SetUpMountTask):
         device_tree = STORAGE.get_proxy(DEVICE_TREE)
 
         # Get the device name.
-        device_name = device_tree.ResolveDevice(self._image_path)
+        device_id = device_tree.ResolveDevice(self._image_path)
 
-        if not device_name:
+        if not device_id:
             raise SourceSetupError("Failed to resolve the Live OS image.")
 
         # Get the device path.
         device_data = DeviceData.from_structure(
-            device_tree.GetDeviceData(device_name)
+            device_tree.GetDeviceData(device_id)
         )
         device_path = device_data.path
 

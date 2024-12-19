@@ -18,41 +18,46 @@
 #
 
 import gi
+
 gi.require_version("Gtk", "3.0")
 gi.require_version("GObject", "2.0")
 gi.require_version("Pango", "1.0")
 gi.require_version("Gio", "2.0")
 gi.require_version("NM", "1.0")
 
-from gi.repository import Gtk
-from gi.repository import GObject, Pango, Gio, NM
-
-from pyanaconda.core.i18n import _, N_, CN_
-from pyanaconda.flags import flags as anaconda_flags
-from pyanaconda.ui.communication import hubQ
-from pyanaconda.ui.gui import GUIObject
-from pyanaconda.ui.gui.spokes import NormalSpoke, StandaloneSpoke
-from pyanaconda.ui.gui.spokes.lib.network_secret_agent import register_secret_agent
-from pyanaconda.ui.categories.system import SystemCategory
-from pyanaconda.ui.gui.hubs.summary import SummaryHub
-from pyanaconda.ui.gui.utils import gtk_call_once, escape_markup, really_hide, really_show
-from pyanaconda.ui.common import FirstbootSpokeMixIn
-from pyanaconda.core.configuration.anaconda import conf
-from pyanaconda.core.util import startProgram
-from pyanaconda.core.process_watchers import PidWatcher
-from pyanaconda.core.constants import ANACONDA_ENVIRON
-from pyanaconda.core import glib
-from pyanaconda.modules.common.constants.services import NETWORK
-from pyanaconda.modules.common.structures.network import NetworkDeviceConfiguration
-from pyanaconda.modules.network.constants import NM_CONNECTION_TYPE_WIFI, \
-    NM_CONNECTION_TYPE_ETHERNET
-
-
-from pyanaconda import network
-
 from uuid import uuid4
 
+from gi.repository import NM, Gio, GObject, Gtk, Pango
+
+from pyanaconda import network
 from pyanaconda.anaconda_loggers import get_module_logger
+from pyanaconda.core import glib
+from pyanaconda.core.configuration.anaconda import conf
+from pyanaconda.core.constants import ANACONDA_ENVIRON, NETWORK_CAPABILITY_TEAM
+from pyanaconda.core.i18n import CN_, N_, _
+from pyanaconda.core.process_watchers import PidWatcher
+from pyanaconda.core.util import startProgram
+from pyanaconda.flags import flags as anaconda_flags
+from pyanaconda.modules.common.constants.services import NETWORK
+from pyanaconda.modules.common.structures.network import NetworkDeviceConfiguration
+from pyanaconda.modules.network.constants import (
+    NM_CONNECTION_TYPE_ETHERNET,
+    NM_CONNECTION_TYPE_WIFI,
+)
+from pyanaconda.ui.categories.system import SystemCategory
+from pyanaconda.ui.common import FirstbootSpokeMixIn
+from pyanaconda.ui.communication import hubQ
+from pyanaconda.ui.gui import GUIObject
+from pyanaconda.ui.gui.hubs.summary import SummaryHub
+from pyanaconda.ui.gui.spokes import NormalSpoke, StandaloneSpoke
+from pyanaconda.ui.gui.spokes.lib.network_secret_agent import register_secret_agent
+from pyanaconda.ui.gui.utils import (
+    escape_markup,
+    gtk_call_once,
+    really_hide,
+    really_show,
+)
+
 log = get_module_logger(__name__)
 
 NM._80211ApFlags = getattr(NM, "80211ApFlags")
@@ -363,6 +368,18 @@ class NetworkControlBox(GObject.GObject):
         self.label_current_hostname = self.builder.get_object("label_current_hostname")
         self.button_apply_hostname = self.builder.get_object("button_apply_hostname")
         self.button_apply_hostname.connect("clicked", self.on_apply_hostname)
+
+        if NETWORK_CAPABILITY_TEAM not in self._network_module.Capabilities:
+            self._remove_team_selection()
+
+    def _remove_team_selection(self):
+        log.debug("team functionality is not supported")
+        model = self.builder.get_object("liststore_add_device")
+        for row in model:
+            if row[1] == "team":
+                model.remove(row.iter)
+                return True
+        return False
 
     @property
     def vbox(self):
@@ -934,7 +951,9 @@ class NetworkControlBox(GObject.GObject):
             device = self.client.get_device_by_iface(dev_cfg.device_name)
             if device:
                 vlanid = device.get_vlan_id()
-                parent = device.get_parent().get_iface()
+                parent = device.get_parent() or ""
+                if parent:
+                    parent = parent.get_iface()
             else:
                 con = self.client.get_connection_by_uuid(dev_cfg.connection_uuid)
                 if con:
@@ -1540,7 +1559,8 @@ class NetworkSpoke(FirstbootSpokeMixIn, NormalSpoke):
         # TODO: check also if source requires updates when implemented
         # If we can't configure network, don't require it
         return (not conf.system.can_configure_network
-                or self._network_module.GetActivatedInterfaces())
+                or self._network_module.IsConnecting
+                or self._network_module.Connected)
 
     @property
     def mandatory(self):
@@ -1691,7 +1711,8 @@ class NetworkStandaloneSpoke(StandaloneSpoke):
     @property
     def completed(self):
         return (not conf.system.can_configure_network
-                or self._network_module.GetActivatedInterfaces()
+                or self._network_module.Connected
+                or self._network_module.IsConnecting
                 or not (self.payload.source_type != conf.payload.default_source
                         and self.payload.needs_network))
 

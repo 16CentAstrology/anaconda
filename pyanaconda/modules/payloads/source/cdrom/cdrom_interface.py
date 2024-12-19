@@ -19,8 +19,11 @@
 #
 from dasbus.server.interface import dbus_interface
 from dasbus.typing import *  # pylint: disable=wildcard-import
+
 from pyanaconda.modules.common.constants.interfaces import PAYLOAD_SOURCE_CDROM
-from pyanaconda.modules.payloads.source.source_base_interface import PayloadSourceBaseInterface
+from pyanaconda.modules.payloads.source.source_base_interface import (
+    PayloadSourceBaseInterface,
+)
 
 
 @dbus_interface(PAYLOAD_SOURCE_CDROM.interface_name)
@@ -34,9 +37,9 @@ class CdromSourceInterface(PayloadSourceBaseInterface):
 
     def connect_signals(self):
         super().connect_signals()
-        self.watch_property("DeviceName", self.implementation.device_name_changed)
+        self.watch_property("DeviceID", self.implementation.device_id_changed)
 
     @property
-    def DeviceName(self) -> Str:
-        """Get device name of the cdrom found."""
-        return self.implementation.device_name
+    def DeviceID(self) -> Str:
+        """Get device ID of the cdrom found."""
+        return self.implementation.device_id

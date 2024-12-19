@@ -15,6 +15,8 @@
 # You should have received a copy of the GNU Lesser General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+SUBDIRS = dd
+
 dracutdir = $(prefix)/lib/dracut/modules.d/80$(PACKAGE_NAME)
 dist_dracut_SCRIPTS = module-setup.sh \
                       python-deps \
@@ -35,7 +37,6 @@ dist_dracut_SCRIPTS = module-setup.sh \
                       anaconda-copy-cmdline.sh \
                       anaconda-copy-dhclient.sh \
                       anaconda-copy-prefixdevname.sh \
-                      anaconda-copy-s390ccwconf.sh \
                       anaconda-ifcfg.sh \
                       anaconda-set-kernel-hung-timeout.sh \
                       anaconda-error-reporting.sh \

@@ -19,14 +19,12 @@
 #
 import os
 import re
-import sys
 import unittest
+from unittest.mock import Mock, create_autospec, patch
 
-from unittest.mock import Mock, patch, create_autospec
 from pyanaconda.ui import UserInterface
-from pyanaconda.ui.common import StandaloneSpoke, Hub, Screen
+from pyanaconda.ui.common import Hub, Screen, StandaloneSpoke
 from tests.unit_tests.pyanaconda_tests import patch_dbus_get_proxy
-
 
 # blivet-gui is supported on Fedora, but not ELN/CentOS/RHEL
 HAVE_BLIVET_GUI = os.path.exists("/usr/bin/blivet-gui")
@@ -44,12 +42,6 @@ class SimpleUITestCase(unittest.TestCase):
         self.data = Mock()
         self.storage = Mock()
         self.payload = Mock()
-
-        # Mock the TimezoneMap hack.
-        sys.modules["gi.repository.TimezoneMap"] = Mock()
-
-    def tearDown(self):
-        sys.modules.pop("gi.repository.TimezoneMap")
 
     @property
     def paths(self):
@@ -151,7 +143,7 @@ class SimpleUITestCase(unittest.TestCase):
             self._check_spokes_with_same_priority(post_spokes)
 
     def _check_spokes_with_same_priority(self, spokes):
-        res = dict()
+        res = {}
 
         for spoke in spokes:
             priority = spoke.priority

@@ -18,33 +18,38 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 
+import functools
+import importlib.machinery
+import importlib.util
+import inspect
 import os
 import os.path
-import subprocess
-# Used for ascii_lowercase, ascii_uppercase constants
-import tempfile
 import re
 import signal
+import subprocess
 import sys
+
+# Used for ascii_lowercase, ascii_uppercase constants
+import tempfile
 import types
-import inspect
-import functools
-import importlib.util
-import importlib.machinery
 
 import requests
 from requests_file import FileAdapter
 from requests_ftp import FTPAdapter
 
+from pyanaconda.anaconda_loggers import get_module_logger, get_program_logger
+from pyanaconda.anaconda_logging import program_log_lock
 from pyanaconda.core.configuration.anaconda import conf
-from pyanaconda.core.path import make_directories, open_with_perm, join_paths
-from pyanaconda.core.process_watchers import WatchProcesses
-from pyanaconda.core.constants import DRACUT_SHUTDOWN_EJECT, \
-    IPMI_ABORTED, X_TIMEOUT
+from pyanaconda.core.constants import (
+    DRACUT_REPO_DIR,
+    DRACUT_SHUTDOWN_EJECT,
+    IPMI_ABORTED,
+    PACKAGES_LIST_FILE,
+)
+from pyanaconda.core.live_user import get_live_user
+from pyanaconda.core.path import join_paths, make_directories, open_with_perm
 from pyanaconda.errors import RemovedModuleError
 
-from pyanaconda.anaconda_logging import program_log_lock
-from pyanaconda.anaconda_loggers import get_module_logger, get_program_logger
 log = get_module_logger(__name__)
 program_log = get_program_logger()
 
@@ -76,7 +81,8 @@ def augmentEnv():
 
 
 def startProgram(argv, root='/', stdin=None, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                 env_prune=None, env_add=None, reset_handlers=True, reset_lang=True, **kwargs):
+                 env_prune=None, env_add=None, reset_handlers=True, reset_lang=True,
+                 do_preexec=True, **kwargs):
     """ Start an external program and return the Popen object.
 
         The root and reset_handlers arguments are handled by passing a
@@ -93,6 +99,7 @@ def startProgram(argv, root='/', stdin=None, stdout=subprocess.PIPE, stderr=subp
         :param env_add: environment variables to add before execution
         :param reset_handlers: whether to reset to SIG_DFL any signal handlers set to SIG_IGN
         :param reset_lang: whether to set the locale of the child process to C
+        :param do_preexec: whether to use the preexec function
         :param kwargs: Additional parameters to pass to subprocess.Popen
         :return: A Popen object for the running command.
     """
@@ -105,13 +112,41 @@ def startProgram(argv, root='/', stdin=None, stdout=subprocess.PIPE, stderr=subp
     if target_root == conf.target.physical_root:
         target_root = conf.target.system_root
 
-    # Check for and save a preexec_fn argument
-    preexec_fn = kwargs.pop("preexec_fn", None)
-
     # Map reset_handlers to the restore_signals Popen argument.
     # restore_signals handles SIGPIPE, and preexec below handles any additional
     # signals ignored by anaconda.
     restore_signals = reset_handlers
+
+    with program_log_lock:
+        if target_root != '/':
+            program_log.info("Running in chroot '%s'... %s", target_root, " ".join(argv))
+        else:
+            program_log.info("Running... %s", " ".join(argv))
+
+    env = augmentEnv()
+    for var in env_prune:
+        env.pop(var, None)
+
+    if reset_lang:
+        env.update({"LC_ALL": "C"})
+
+    if env_add:
+        env.update(env_add)
+
+    # pylint: disable=subprocess-popen-preexec-fn
+    partsubp = functools.partial(subprocess.Popen,
+                                 argv,
+                                 stdin=stdin,
+                                 stdout=stdout,
+                                 stderr=stderr,
+                                 close_fds=True,
+                                 restore_signals=restore_signals,
+                                 cwd=root, env=env, **kwargs)
+    if not do_preexec:
+        return partsubp()
+
+    # Check for and save a preexec_fn argument
+    preexec_fn = kwargs.pop("preexec_fn", None)
 
     def preexec():
         # If a target root was specificed, chroot into it
@@ -131,129 +166,12 @@ def startProgram(argv, root='/', stdin=None, stdout=subprocess.PIPE, stderr=subp
         if preexec_fn is not None:
             preexec_fn()
 
-    with program_log_lock:
-        if target_root != '/':
-            program_log.info("Running in chroot '%s'... %s", target_root, " ".join(argv))
-        else:
-            program_log.info("Running... %s", " ".join(argv))
-
-    env = augmentEnv()
-    for var in env_prune:
-        env.pop(var, None)
-
-    if reset_lang:
-        env.update({"LC_ALL": "C"})
-
-    if env_add:
-        env.update(env_add)
-
-    # pylint: disable=subprocess-popen-preexec-fn
-    return subprocess.Popen(argv,
-                            stdin=stdin,
-                            stdout=stdout,
-                            stderr=stderr,
-                            close_fds=True,
-                            restore_signals=restore_signals,
-                            preexec_fn=preexec, cwd=root, env=env, **kwargs)
+    return partsubp(preexec_fn=preexec)
 
 
-class X11Status:
-    """Status of Xorg launch.
-
-    Values of an instance can be modified from the handler functions.
-    """
-    def __init__(self):
-        self.started = False
-        self.timed_out = False
-
-    def needs_waiting(self):
-        return not (self.started or self.timed_out)
-
-
-def startX(argv, output_redirect=None, timeout=X_TIMEOUT):
-    """ Start X and return once X is ready to accept connections.
-
-        X11, if SIGUSR1 is set to SIG_IGN, will send SIGUSR1 to the parent
-        process once it is ready to accept client connections. This method
-        sets that up and waits for the signal or bombs out if nothing happens
-        for a minute. The process will also be added to the list of watched
-        processes.
-
-        :param argv: The command line to run, as a list
-        :param output_redirect: file or file descriptor to redirect stdout and stderr to
-        :param timeout: Number of seconds to timing out.
-    """
-    x11_status = X11Status()
-
-    # Handle successful start before timeout
-    def sigusr1_success_handler(num, frame):
-        log.debug("X server has signalled a successful start.")
-        x11_status.started = True
-
-    # Fail after, let's say a minute, in case something weird happens
-    # and we don't receive SIGUSR1
-    def sigalrm_handler(num, frame):
-        # Check that it didn't make it under the wire
-        if x11_status.started:
-            return
-        x11_status.timed_out = True
-        log.error("Timeout trying to start %s", argv[0])
-
-    # Handle delayed start after timeout
-    def sigusr1_too_late_handler(num, frame):
-        if x11_status.timed_out:
-            log.debug("SIGUSR1 received after X server timeout. Switching back to tty1. "
-                      "SIGUSR1 now again initiates test of exception reporting.")
-            signal.signal(signal.SIGUSR1, old_sigusr1_handler)
-
-    # preexec_fn to add the SIGUSR1 handler in the child we are starting
-    # see man page XServer(1), section "signals"
-    def sigusr1_preexec():
-        signal.signal(signal.SIGUSR1, signal.SIG_IGN)
-
-    old_sigalrm_handler = None
-    old_sigusr1_handler = None
-    childproc = None
-    try:
-        old_sigusr1_handler = signal.signal(signal.SIGUSR1, sigusr1_success_handler)
-        old_sigalrm_handler = signal.signal(signal.SIGALRM, sigalrm_handler)
-
-        # Start the timer
-        log.debug("Setting timeout %s seconds for starting X.", timeout)
-        signal.alarm(timeout)
-
-        childproc = startProgram(argv, stdout=output_redirect, stderr=output_redirect,
-                                 preexec_fn=sigusr1_preexec)
-        WatchProcesses.watch_process(childproc, argv[0])
-
-        # Wait for SIGUSR1 or SIGALRM
-        while x11_status.needs_waiting():
-            signal.pause()
-
-    finally:
-        # Stop the timer
-        signal.alarm(0)
-        signal.signal(signal.SIGALRM, old_sigalrm_handler)
-
-        # Handle outcome of X start attempt
-        if x11_status.started:
-            signal.signal(signal.SIGUSR1, old_sigusr1_handler)
-        elif x11_status.timed_out:
-            signal.signal(signal.SIGUSR1, sigusr1_too_late_handler)
-            # Kill Xorg because from now on we will not use it. It will exit only after sending
-            # the signal, but at least we don't have to track that.
-            WatchProcesses.unwatch_process(childproc)
-            childproc.terminate()
-            log.debug("Exception handler test suspended to prevent accidental activation by "
-                      "delayed Xorg start. Next SIGUSR1 will be handled as delayed Xorg start.")
-            # Raise an exception to notify the caller that things went wrong. This affects
-            # particularly pyanaconda.display.do_startup_x11_actions(), where the window manager
-            # is started immediately after this. The WM would just wait forever.
-            raise TimeoutError("Timeout trying to start %s" % argv[0])
-
-
-def _run_program(argv, root='/', stdin=None, stdout=None, env_prune=None, log_output=True,
-                 binary_output=False, filter_stderr=False):
+def _run_program(argv, root='/', stdin=None, stdout=None, env_prune=None,
+                 log_output=True, binary_output=False, filter_stderr=False,
+                 do_preexec=True, env_add=None, user=None):
     """ Run an external program, log the output and return it to the caller
 
         NOTE/WARNING: UnicodeDecodeError will be raised if the output of the of the
@@ -267,6 +185,9 @@ def _run_program(argv, root='/', stdin=None, stdout=None, env_prune=None, log_ou
         :param log_output: whether to log the output of command
         :param binary_output: whether to treat the output of command as binary data
         :param filter_stderr: whether to exclude the contents of stderr from the returned output
+        :param do_preexec: whether to use a preexec_fn for subprocess.Popen
+        :param env_add: environment variables added for the execution
+        :param user: Specify user UID under which the command will be executed
         :return: The return code of the command and the output
     """
     try:
@@ -276,7 +197,7 @@ def _run_program(argv, root='/', stdin=None, stdout=None, env_prune=None, log_ou
             stderr = subprocess.STDOUT
 
         proc = startProgram(argv, root=root, stdin=stdin, stdout=subprocess.PIPE, stderr=stderr,
-                            env_prune=env_prune)
+                            env_prune=env_prune, env_add=env_add, do_preexec=do_preexec, user=user)
 
         (output_string, err_string) = proc.communicate()
         if not binary_output:
@@ -317,13 +238,14 @@ def _run_program(argv, root='/', stdin=None, stdout=None, env_prune=None, log_ou
         raise
 
     with program_log_lock:
-        program_log.debug("Return code: %d", proc.returncode)
+        program_log.debug("Return code of %s: %d", argv[0], proc.returncode)
 
     return (proc.returncode, output_string)
 
 
-def execWithRedirect(command, argv, stdin=None, stdout=None,
-                     root='/', env_prune=None, log_output=True, binary_output=False):
+def execWithRedirect(command, argv, stdin=None, stdout=None, root='/',
+                     env_prune=None, env_add=None, log_output=True, binary_output=False,
+                     do_preexec=True):
     """ Run an external program and redirect the output to a file.
 
         :param command: The command to run
@@ -332,17 +254,45 @@ def execWithRedirect(command, argv, stdin=None, stdout=None,
         :param stdout: Optional file object to redirect stdout and stderr to.
         :param root: The directory to chroot to before running command.
         :param env_prune: environment variable to remove before execution
+        :param env_add: environment variables added for the execution
         :param log_output: whether to log the output of command
         :param binary_output: whether to treat the output of command as binary data
+        :param do_preexec: whether to use a preexec_fn for subprocess.Popen
         :return: The return code of the command
     """
     argv = [command] + argv
     return _run_program(argv, stdin=stdin, stdout=stdout, root=root, env_prune=env_prune,
-                        log_output=log_output, binary_output=binary_output)[0]
+                        env_add=env_add, log_output=log_output, binary_output=binary_output,
+                        do_preexec=do_preexec)[0]
 
 
-def execWithCapture(command, argv, stdin=None, root='/', log_output=True, filter_stderr=False):
+def execWithCapture(command, argv, stdin=None, root='/', env_prune=None, env_add=None,
+                    log_output=True, filter_stderr=False, do_preexec=True):
     """ Run an external program and capture standard out and err.
+
+        :param command: The command to run
+        :param argv: The argument list
+        :param stdin: The file object to read stdin from.
+        :param root: The directory to chroot to before running command.
+        :param env_prune: environment variable to remove before execution
+        :param env_add: environment variables added for the execution
+        :param log_output: Whether to log the output of command
+        :param filter_stderr: Whether stderr should be excluded from the returned output
+        :param do_preexec: whether to use the preexec function
+        :return: The output of the command
+    """
+    argv = [command] + argv
+
+    return _run_program(argv, stdin=stdin, root=root, log_output=log_output, env_prune=env_prune,
+                        env_add=env_add, filter_stderr=filter_stderr, do_preexec=do_preexec)[1]
+
+
+def execWithCaptureAsLiveUser(command, argv, stdin=None, root='/', log_output=True,
+                              filter_stderr=False, do_preexec=True):
+    """ Run an external program and capture standard out and err as liveuser user.
+
+        The liveuser user account is used on Fedora live media. If we need to read values from the
+        running live system we might need to run the commands under the liveuser account.
 
         :param command: The command to run
         :param argv: The argument list
@@ -350,14 +300,23 @@ def execWithCapture(command, argv, stdin=None, root='/', log_output=True, filter
         :param root: The directory to chroot to before running command.
         :param log_output: Whether to log the output of command
         :param filter_stderr: Whether stderr should be excluded from the returned output
+        :param do_preexec: whether to use the preexec function
         :return: The output of the command
     """
     argv = [command] + argv
+
+    user = get_live_user()
+
+    if user is None:
+        raise OSError("Live user is requested to run command but can't be found")
+
     return _run_program(argv, stdin=stdin, root=root, log_output=log_output,
-                        filter_stderr=filter_stderr)[1]
+                        filter_stderr=filter_stderr, do_preexec=do_preexec,
+                        user=user.uid, env_add=user.env_add, env_prune=user.env_prune)[1]
 
 
-def execReadlines(command, argv, stdin=None, root='/', env_prune=None, filter_stderr=False):
+def execReadlines(command, argv, stdin=None, root='/', env_prune=None, filter_stderr=False,
+                  raise_on_nozero=True):
     """ Execute an external command and return the line output of the command
         in real-time.
 
@@ -375,19 +334,21 @@ def execReadlines(command, argv, stdin=None, root='/', env_prune=None, filter_st
         :param root: The directory to chroot to before running command.
         :param env_prune: environment variable to remove before execution
         :param filter_stderr: Whether stderr should be excluded from the returned output
+        :param raise_on_nozero: Whether a nonzero exit status of the tool should cause an exception
 
         Output from the file is not logged to program.log
         This returns an iterator with the lines from the command until it has finished
     """
 
-    class ExecLineReader(object):
+    class ExecLineReader:
         """Iterator class for returning lines from a process and cleaning
            up the process when the output is no longer needed.
         """
 
-        def __init__(self, proc, argv):
+        def __init__(self, proc, argv, raise_on_nozero):
             self._proc = proc
             self._argv = argv
+            self._raise_on_nozero = raise_on_nozero
 
         def __iter__(self):
             return self
@@ -408,6 +369,10 @@ def execReadlines(command, argv, stdin=None, root='/', env_prune=None, filter_st
                 # Output finished, wait for the process to end
                 self._proc.communicate()
 
+                # If we don't care about return codes, just finish
+                if not self._raise_on_nozero:
+                    raise StopIteration
+
                 # Check for successful exit
                 if self._proc.returncode < 0:
                     raise OSError("process '%s' was killed by signal %s" %
@@ -418,6 +383,10 @@ def execReadlines(command, argv, stdin=None, root='/', env_prune=None, filter_st
                 raise StopIteration
 
             return line.strip()
+
+        @property
+        def rc(self):
+            return self._proc.returncode
 
     argv = [command] + argv
 
@@ -433,7 +402,7 @@ def execReadlines(command, argv, stdin=None, root='/', env_prune=None, filter_st
             program_log.error("Error running %s: %s", argv[0], e.strerror)
         raise
 
-    return ExecLineReader(proc, argv)
+    return ExecLineReader(proc, argv, raise_on_nozero)
 
 
 ## Run a shell.
@@ -530,7 +499,7 @@ def vtActivate(num):
     """
 
     try:
-        ret = execWithRedirect("chvt", [str(num)])
+        ret = execWithRedirect("chvt", [str(num)], do_preexec=False)
     except OSError as oserr:
         ret = -1
         log.error("Failed to run chvt: %s", oserr.strerror)
@@ -694,8 +663,8 @@ def collect(module_pattern, path, pred):
                     module_parts.pop()
 
                     # make sure all "parent" modules are in sys.modules
-                    for l in range(len(module_parts)):
-                        module_part_name = ".".join(module_parts[:l + 1])
+                    for ind in range(len(module_parts)):
+                        module_part_name = ".".join(module_parts[:ind + 1])
                         if module_part_name not in sys.modules:
                             module_part = types.ModuleType(module_part_name)
                             module_part.__path__ = [path]
@@ -835,7 +804,7 @@ def get_anaconda_version_string(build_time_version=False):
         return "unknown"
 
 
-class LazyObject(object):
+class LazyObject:
     """The lazy object."""
 
     def __init__(self, getter):
@@ -928,3 +897,32 @@ def restorecon(paths, root, skip_nonexistent=False):
         return False
     else:
         return True
+
+
+def get_image_packages_info(max_string_chars=0):
+    """List of strings containing versions of installer image packages.
+
+    The package version specifications are space separated in the strings.
+
+    :param int max_string_chars: maximum number of character in a string
+    :return [str]
+    """
+    info_lines = []
+    if os.path.exists(PACKAGES_LIST_FILE):
+        with open(PACKAGES_LIST_FILE) as f:
+            while True:
+                lines = f.readlines(max_string_chars)
+                if not lines:
+                    break
+                info_lines.append(' '.join(line.strip() for line in lines))
+    return info_lines
+
+
+def is_stage2_on_nfs():
+    """Is the installation running from image mounted via NFS?"""
+    for line in open("/proc/mounts").readlines():
+        values = line.split()
+        if len(values) > 2:
+            if values[1] == DRACUT_REPO_DIR and values[2] in ("nfs", "nfs4"):
+                return True
+    return False

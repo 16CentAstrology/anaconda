@@ -34,9 +34,9 @@ if [ "$ARCH" = "ppc" ]; then
     MODULE_LIST+=" spufs "
 fi
 
-MODULE_LIST+=" raid0 raid1 raid5 raid6 raid456 raid10 linear dm-mod dm-zero  \
+MODULE_LIST+=" raid0 raid1 raid5 raid6 raid456 raid10 dm-mod dm-zero  \
               dm-mirror dm-snapshot dm-multipath dm-round-robin dm-crypt cbc \
-              sha256 lrw xts "
+              lrw xts "
 
 for m in $MODULE_LIST; do
     if ! modinfo "$m" >/dev/null 2>&1 ; then

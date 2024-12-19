@@ -19,30 +19,57 @@
 #
 import tempfile
 import unittest
+from unittest.mock import Mock, PropertyMock, patch
+
 import pytest
-
-from unittest.mock import patch, Mock, PropertyMock
-
-from tests.unit_tests.pyanaconda_tests import patch_dbus_publish_object, check_task_creation
-
-from blivet.devices import StorageDevice, DiskDevice, DASDDevice, ZFCPDiskDevice, PartitionDevice, \
-    LUKSDevice, iScsiDiskDevice, NVDIMMNamespaceDevice, FcoeDiskDevice, OpticalDevice
-from blivet.errors import StorageError, FSError
-from blivet.formats import get_format, device_formats, DeviceFormat
+from blivet.devices import (
+    DASDDevice,
+    DiskDevice,
+    FcoeDiskDevice,
+    LUKSDevice,
+    LVMVolumeGroupDevice,
+    NVMeFabricsNamespaceDevice,
+    OpticalDevice,
+    PartitionDevice,
+    StorageDevice,
+    ZFCPDiskDevice,
+    iScsiDiskDevice,
+)
+from blivet.devices.disk import NVMeController
+from blivet.errors import FSError, StorageError
+from blivet.formats import DeviceFormat, device_formats, get_format
 from blivet.formats.fs import FS, Iso9660FS
 from blivet.formats.luks import LUKS
 from blivet.size import Size
-
 from dasbus.typing import *  # pylint: disable=wildcard-import
+
 from pyanaconda.core.kernel import KernelArguments
-from pyanaconda.modules.common.errors.storage import UnknownDeviceError, MountFilesystemError
-from pyanaconda.modules.common.structures.storage import DeviceFormatData
-from pyanaconda.modules.storage.devicetree import DeviceTreeModule, create_storage, utils
-from pyanaconda.modules.storage.devicetree.devicetree_interface import DeviceTreeInterface
+from pyanaconda.modules.common.errors.storage import (
+    MountFilesystemError,
+    UnknownDeviceError,
+)
+from pyanaconda.modules.common.structures.storage import (
+    DeviceFormatData,
+    MountPointConstraintsData,
+)
+from pyanaconda.modules.storage.devicetree import (
+    DeviceTreeModule,
+    create_storage,
+    utils,
+)
+from pyanaconda.modules.storage.devicetree.devicetree_interface import (
+    DeviceTreeInterface,
+)
 from pyanaconda.modules.storage.devicetree.populate import FindDevicesTask
-from pyanaconda.modules.storage.devicetree.rescue import FindExistingSystemsTask, \
-    MountExistingSystemTask
+from pyanaconda.modules.storage.devicetree.rescue import (
+    FindExistingSystemsTask,
+    MountExistingSystemTask,
+)
 from pyanaconda.modules.storage.devicetree.root import Root
+from tests.unit_tests.pyanaconda_tests import (
+    check_task_creation,
+    patch_dbus_publish_object,
+)
 
 
 class DeviceTreeInterfaceTestCase(unittest.TestCase):
@@ -69,6 +96,46 @@ class DeviceTreeInterfaceTestCase(unittest.TestCase):
         """Add a device to the device tree."""
         self.storage.devicetree._add_device(device)
 
+    def test_get_attribute(self):
+        """Test the _get_attribute method."""
+        value = None
+        assert self.module._get_attribute(value, "x") is None
+
+        value = Mock(x=None)
+        assert self.module._get_attribute(value, "x") is None
+
+        value = Mock(x="")
+        assert self.module._get_attribute(value, "x") is None
+
+        value = Mock(x=0)
+        assert self.module._get_attribute(value, "x") == "0"
+
+        value = Mock(x=1)
+        assert self.module._get_attribute(value, "x") == "1"
+
+        value = Mock(x="test")
+        assert self.module._get_attribute(value, "x") == "test"
+
+    def test_get_attribute_list(self):
+        """Test the _get_attribute_list method."""
+        values = []
+        assert self.module._get_attribute_list(values, "x") is None
+
+        values = [None, Mock(x=None), Mock(x="")]
+        assert self.module._get_attribute_list(values, "x") is None
+
+        values = [Mock(x=0)]
+        assert self.module._get_attribute_list(values, "x") == "0"
+
+        values = [Mock(x=1), Mock(x=0)]
+        assert self.module._get_attribute_list(values, "x") == "0, 1"
+
+        values = [Mock(x=1), Mock(x=0), Mock(x=2)]
+        assert self.module._get_attribute_list(values, "x") == "0, 1, 2"
+
+        values = [Mock(x=1), Mock(x=0), Mock(x=2), Mock(x=0), Mock(x=1)]
+        assert self.module._get_attribute_list(values, "x") == "0, 1, 2"
+
     def test_get_root_device(self):
         """Test GetRootDevice."""
         assert self.interface.GetRootDevice() == ""
@@ -94,7 +161,14 @@ class DeviceTreeInterfaceTestCase(unittest.TestCase):
             size=Size("10 GiB")
         ))
 
-        assert self.interface.GetDevices() == ["dev1", "dev2"]
+        self._add_device(LVMVolumeGroupDevice(
+            "dev3",
+            size=Size("10 GiB")
+        ))
+
+        # for disks and "generic" devices device ID is just name, for LVM
+        # VGs its "LVM-"" + name
+        assert self.interface.GetDevices() == ["dev1", "dev2", "LVM-dev3"]
 
     def test_get_disks(self):
         """Test GetDisks."""
@@ -138,6 +212,7 @@ class DeviceTreeInterfaceTestCase(unittest.TestCase):
         assert self.interface.GetDeviceData("dev1") == {
             'type': get_variant(Str, 'disk'),
             'name': get_variant(Str, 'dev1'),
+            'device-id': get_variant(Str, 'dev1'),
             'path': get_variant(Str, '/dev/dev1'),
             'size': get_variant(UInt64, Size("10 MiB").get_bytes()),
             'is-disk': get_variant(Bool, True),
@@ -145,6 +220,7 @@ class DeviceTreeInterfaceTestCase(unittest.TestCase):
             'removable': get_variant(Bool, False),
             'parents': get_variant(List[Str], []),
             'children': get_variant(List[Str], []),
+            'links': get_variant(List[Str], []),
             'attrs': get_variant(Dict[Str, Str], {
                 "serial": "SERIAL_ID",
                 "vendor": "VENDOR_ID",
@@ -169,8 +245,7 @@ class DeviceTreeInterfaceTestCase(unittest.TestCase):
             "dev1",
             fmt=get_format("ext4"),
             size=Size("10 GiB"),
-            busid="0.0.0201",
-            opts={}
+            busid="0.0.0201"
         ))
 
         data = self.interface.GetDeviceData("dev1")
@@ -226,24 +301,56 @@ class DeviceTreeInterfaceTestCase(unittest.TestCase):
             "path-id": "pci-0000:00:00.0-bla-1"
         })
 
-    def test_get_nvdimm_device_data(self):
-        """Test GetDeviceData for NVDIMM."""
-        self._add_device(NVDIMMNamespaceDevice(
-            "dev1",
+    def test_get_nvme_fabrics_device_data(self):
+        """Test GetDeviceData for NVMe Fabrics."""
+        dev = NVMeFabricsNamespaceDevice(
+            "nvme4n1",
             fmt=get_format("ext4"),
             size=Size("10 GiB"),
-            mode="sector",
-            devname="namespace0.0",
-            sector_size=512,
-            id_path="pci-0000:00:00.0-bla-1"
-        ))
+            nsid=5,
+            eui64="eui.f04xxxxxxxxx0000000100000001",
+            nguid="0xf04xxxxxxxxx0000000100000001"
+        )
+        ctrl1 = NVMeController(
+            id=124,
+            name='nvme1',
+            nvme_ver='1.0',
+            serial='80BgLFM7xMoBLABLABLA',
+            transport='fc',
+            transport_address='0x10000000',
+            subsysnqn='nqn.1992-08.com.example:blabla:subsystem.nvme_4',
+        )
+        ctrl2 = NVMeController(
+            id=123,
+            name='nvme2',
+            nvme_ver='1.0',
+            serial='80BgLFM7xMoBLABLABLA',
+            transport='fc',
+            transport_address='0x20000000',
+            subsysnqn='nqn.1992-08.com.example:blabla:subsystem.nvme_4',
+        )
+        ctrl3 = NVMeController(
+            id=126,
+            name='nvme3',
+            nvme_ver='1.0',
+            serial='80BgLFM7xMoBLABLABLA',
+            transport='fc',
+            transport_address='0x30000000',
+            subsysnqn='nqn.1992-08.com.example:blabla:subsystem.nvme_4',
+        )
+        dev._controllers = [ctrl1, ctrl2, ctrl3]
+        self._add_device(dev)
 
-        data = self.interface.GetDeviceData("dev1")
-        assert data['type'] == get_variant(Str, 'nvdimm')
+        data = self.interface.GetDeviceData("nvme4n1")
+        assert data['type'] == get_variant(Str, 'nvme-fabrics')
         assert data['attrs'] == get_variant(Dict[Str, Str], {
-            "mode": "sector",
-            "namespace": "namespace0.0",
-            "path-id": "pci-0000:00:00.0-bla-1"
+            "nsid": "5",
+            "eui64": "eui.f04xxxxxxxxx0000000100000001",
+            "nguid": "0xf04xxxxxxxxx0000000100000001",
+            "controllers-id": "123, 124, 126",
+            "transports-type": "fc",
+            "transports-address": "0x10000000, 0x20000000, 0x30000000",
+            "subsystems-nqn": "nqn.1992-08.com.example:blabla:subsystem.nvme_4",
         })
 
     def test_get_zfcp_device_data(self):
@@ -254,7 +361,8 @@ class DeviceTreeInterfaceTestCase(unittest.TestCase):
             size=Size("10 GiB"),
             fcp_lun="0x5719000000000000",
             wwpn="0x5005076300c18154",
-            hba_id="0.0.010a"
+            hba_id="0.0.010a",
+            id_path="ccw-0.0.010a-fc-0x5005076300c18154-lun-0x5719000000000000"
         ))
 
         data = self.interface.GetDeviceData("dev1")
@@ -262,8 +370,26 @@ class DeviceTreeInterfaceTestCase(unittest.TestCase):
         assert data['attrs'] == get_variant(Dict[Str, Str], {
             "fcp-lun": "0x5719000000000000",
             "wwpn": "0x5005076300c18154",
-            "hba-id": "0.0.010a"
+            "hba-id": "0.0.010a",
+            "path-id": "ccw-0.0.010a-fc-0x5005076300c18154-lun-0x5719000000000000"
         })
+
+    def test_get_parted_device_data(self):
+        sda1 = PartitionDevice(
+            "dev1",
+            size=Size("500 MiB"),
+            fmt=get_format("ext4", exists=True)
+        )
+        self._add_device(sda1)
+
+        with patch.object(PartitionDevice,
+                          'part_type_name',
+                          new_callable=PropertyMock) as mock_part_type_name:
+            mock_part_type_name.return_value = "Microsoft reserved partition"
+
+            data = self.interface.GetDeviceData("dev1")
+            assert data['attrs']['partition-type-name'] == "Microsoft reserved partition"
+            assert data['attrs']['isleaf'] == "True"
 
     def test_get_format_data(self):
         """Test GetFormatData."""
@@ -280,9 +406,10 @@ class DeviceTreeInterfaceTestCase(unittest.TestCase):
         )
         self._add_device(dev1)
 
-        assert self.interface.GetFormatData("dev1") == {
+        assert self.interface.GetFormatData(dev1.device_id) == {
             'type': get_variant(Str, 'ext4'),
             'mountable': get_variant(Bool, True),
+            'formattable': get_variant(Bool, True),
             'attrs': get_variant(Dict[Str, Str], {
                 "uuid": "1234-56-7890",
                 "label": "LABEL",
@@ -294,19 +421,38 @@ class DeviceTreeInterfaceTestCase(unittest.TestCase):
         fmt2 = get_format(
             "luks"
         )
-        dev2 = LUKSDevice(
+        dev2 = StorageDevice(
             "dev2",
-            parents=[dev1],
             fmt=fmt2,
             size=Size("10 GiB")
         )
         self._add_device(dev2)
 
-        assert self.interface.GetFormatData("dev2") == {
+        assert self.interface.GetFormatData(dev2.device_id) == {
             'type': get_variant(Str, 'luks'),
             'mountable': get_variant(Bool, False),
-            'attrs': get_variant(Dict[Str, Str], {}),
+            'formattable': get_variant(Bool, True),
+            'attrs': get_variant(Dict[Str, Str], {'has_key': 'False'}),
             'description': get_variant(Str, 'LUKS'),
+        }
+
+        fmt3 = get_format(
+            ""
+        )
+        dev3 = StorageDevice(
+            "dev3",
+            parents=[dev1],
+            fmt=fmt3,
+            size=Size("10 GiB")
+        )
+        self._add_device(dev3)
+
+        assert self.interface.GetFormatData(dev3.device_id) == {
+            'type': get_variant(Str, ''),
+            'mountable': get_variant(Bool, False),
+            'formattable': get_variant(Bool, False),
+            'description': get_variant(Str, 'Unknown'),
+            'attrs': get_variant(Dict[Str, Str], {}),
         }
 
     def test_get_format_type_data(self):
@@ -314,6 +460,7 @@ class DeviceTreeInterfaceTestCase(unittest.TestCase):
         assert self.interface.GetFormatTypeData("swap") == {
             'type': get_variant(Str, 'swap'),
             'mountable': get_variant(Bool, False),
+            'formattable': get_variant(Bool, False),
             'attrs': get_variant(Dict[Str, Str], {}),
             'description': get_variant(Str, 'swap'),
         }
@@ -347,6 +494,7 @@ class DeviceTreeInterfaceTestCase(unittest.TestCase):
             'action-description': 'create format',
             'object-type': 'format',
             'object-description': 'partition table (MSDOS)',
+            'device-id': dev1.device_id,
             'device-name': 'dev1',
             'device-description': 'VENDOR MODEL (dev1)',
             'attrs': {},
@@ -372,6 +520,7 @@ class DeviceTreeInterfaceTestCase(unittest.TestCase):
             'action-description': 'destroy device',
             'object-type': 'device',
             'object-description': 'blivet',
+            'device-id': dev2.device_id,
             'device-name': 'dev2',
             'device-description': 'dev2',
             'attrs': {
@@ -400,6 +549,7 @@ class DeviceTreeInterfaceTestCase(unittest.TestCase):
             'action-description': 'create device',
             'object-type': 'device',
             'object-description': 'partition',
+            'device-id': dev3.device_id,
             'device-name': 'dev3',
             'device-description': 'dev3 on VENDOR MODEL',
             'attrs': {'mount-point': '/home'},
@@ -410,6 +560,7 @@ class DeviceTreeInterfaceTestCase(unittest.TestCase):
             'action-description': 'create format',
             'object-type': 'format',
             'object-description': 'ext4',
+            'device-id': dev3.device_id,
             'device-name': 'dev3',
             'device-description': 'dev3 on VENDOR MODEL',
             'attrs': {'mount-point': '/home'},
@@ -584,22 +735,6 @@ class DeviceTreeInterfaceTestCase(unittest.TestCase):
         assert self.interface.GetAncestors(["dev2", "dev3"]) == ["dev1", "dev2"]
         assert self.interface.GetAncestors(["dev2", "dev5"]) == ["dev1", "dev4"]
 
-    @patch.object(StorageDevice, "setup")
-    def test_setup_device(self, setup):
-        """Test SetupDevice."""
-        self._add_device(StorageDevice("dev1"))
-
-        self.interface.SetupDevice("dev1")
-        setup.assert_called_once()
-
-    @patch.object(StorageDevice, "teardown")
-    def test_teardown_device(self, teardown):
-        """Test TeardownDevice."""
-        self._add_device(StorageDevice("dev1"))
-
-        self.interface.TeardownDevice("dev1")
-        teardown.assert_called_once()
-
     @patch.object(FS, "mount")
     def test_mount_device(self, mount):
         """Test MountDevice."""
@@ -666,81 +801,83 @@ class DeviceTreeInterfaceTestCase(unittest.TestCase):
         dev3.controllable = True
         self._add_device(dev3)
 
-        assert self.interface.FindOpticalMedia() == ["dev1", "dev2"]
+        assert self.interface.FindOpticalMedia() == [dev1.device_id, dev2.device_id]
 
     @patch.object(FS, "update_size_info")
     def test_find_mountable_partitions(self, update_size_info):
         """Test FindMountablePartitions."""
-        self._add_device(StorageDevice(
-            "dev1",
-            fmt=get_format("ext4"))
-        )
-        self._add_device(PartitionDevice(
-            "dev2",
-            fmt=get_format("ext4", exists=True)
-        ))
+        dev1 = StorageDevice("dev1", fmt=get_format("ext4"))
+        self._add_device(dev1)
+        dev2 = PartitionDevice("dev2", fmt=get_format("ext4", exists=True))
+        self._add_device(dev2)
 
-        assert self.interface.FindMountablePartitions() == ["dev2"]
+        assert self.interface.FindMountablePartitions() == [dev2.device_id]
 
     @patch.object(LUKS, "setup")
-    @patch.object(LUKSDevice, "teardown")
-    @patch.object(LUKSDevice, "setup")
+    @patch.object(StorageDevice, "teardown")
+    @patch.object(StorageDevice, "setup")
     def test_unlock_device(self, device_setup, device_teardown, format_setup):
         """Test UnlockDevice."""
         self.storage.devicetree.populate = Mock()
         self.storage.devicetree.teardown_all = Mock()
 
-        dev1 = StorageDevice("dev1", fmt=get_format("ext4"), size=Size("10 GiB"))
+        dev1 = StorageDevice("dev1", fmt=get_format("luks"), size=Size("10 GiB"), exists=True)
         self._add_device(dev1)
 
-        dev2 = LUKSDevice("dev2", parents=[dev1], fmt=get_format("luks"), size=Size("10 GiB"))
-        self._add_device(dev2)
-
-        assert self.interface.UnlockDevice("dev2", "passphrase") == True
+        assert self.interface.UnlockDevice(dev1.device_id, "passphrase") is True
 
         device_setup.assert_called_once()
         format_setup.assert_called_once()
         device_teardown.assert_not_called()
         self.storage.devicetree.populate.assert_called_once()
         self.storage.devicetree.teardown_all.assert_called_once()
-        assert dev2.format.has_key
+        assert dev1.format.has_key
+        assert self.interface.GetFormatData(dev1.device_id) == {
+            'type': get_variant(Str, 'luks'),
+            'mountable': get_variant(Bool, False),
+            'formattable': get_variant(Bool, True),
+            'attrs': get_variant(Dict[Str, Str], { "has_key": "True" }),
+            'description': get_variant(Str, 'LUKS'),
+        }
 
         device_setup.side_effect = StorageError("Fake error")
-        assert self.interface.UnlockDevice("dev2", "passphrase") == False
+        assert self.interface.UnlockDevice(dev1.device_id, "passphrase") is False
 
         device_teardown.assert_called_once()
-        assert not dev2.format.has_key
+        assert not dev1.format.has_key
 
     def test_find_unconfigured_luks(self):
         """Test FindUnconfiguredLUKS."""
         assert self.interface.FindUnconfiguredLUKS() == []
 
-        dev1 = StorageDevice("dev1", fmt=get_format("ext4"), size=Size("10 GiB"))
+        dev1 = StorageDevice("dev1", fmt=get_format("luks"), size=Size("10 GiB"))
         self._add_device(dev1)
+
+        assert self.interface.FindUnconfiguredLUKS() == [dev1.device_id]
+
+        dev2 = LUKSDevice("dev2", parents=[dev1], fmt=get_format("ext4"), size=Size("10 GiB"))
+        self._add_device(dev2)
+        dev1.format.passphrase = "123456"
 
         assert self.interface.FindUnconfiguredLUKS() == []
 
-        dev2 = LUKSDevice("dev2", parents=[dev1], fmt=get_format("luks"), size=Size("10 GiB"))
-        self._add_device(dev2)
-
-        assert self.interface.FindUnconfiguredLUKS() == ["dev2"]
-
     def test_set_device_passphrase(self):
         """Test SetDevicePassphrase."""
-        dev1 = StorageDevice("dev1", fmt=get_format("ext4"), size=Size("10 GiB"))
+        dev1 = StorageDevice("dev1", fmt=get_format("luks"), size=Size("10 GiB"))
         self._add_device(dev1)
 
-        dev2 = LUKSDevice("dev2", parents=[dev1], fmt=get_format("luks"), size=Size("10 GiB"))
+        dev2 = LUKSDevice("dev2", parents=[dev1], fmt=get_format("ext4"), size=Size("10 GiB"))
         self._add_device(dev2)
 
-        assert self.interface.FindUnconfiguredLUKS() == ["dev2"]
-        self.interface.SetDevicePassphrase("dev2", "123456")
+        assert self.interface.FindUnconfiguredLUKS() == [dev1.device_id]
+        self.interface.SetDevicePassphrase(dev1.device_id, "123456")
         assert self.interface.FindUnconfiguredLUKS() == []
 
     def test_get_fstab_spec(self):
         """Test GetFstabSpec."""
-        self._add_device(StorageDevice("dev1", fmt=get_format("ext4", uuid="123")))
-        assert self.interface.GetFstabSpec("dev1") == "UUID=123"
+        dev1 = StorageDevice("dev1", fmt=get_format("ext4", uuid="123"))
+        self._add_device(dev1)
+        assert self.interface.GetFstabSpec(dev1.device_id) == "UUID=123"
 
     def test_get_existing_systems(self):
         """Test GetExistingSystems."""
@@ -759,6 +896,32 @@ class DeviceTreeInterfaceTestCase(unittest.TestCase):
             'os-name': get_variant(Str, 'My Linux'),
             'devices': get_variant(List[Str], ['dev1', 'dev2']),
             'mount-points': get_variant(Dict[Str, Str], {'/': 'dev1'}),
+        }]
+
+    def test_get_existing_systems_windows(self):
+        sda1 = PartitionDevice(
+            "dev1",
+            size=Size("500 MiB"),
+            fmt=get_format("ntfs", exists=True),
+            part_type_uuid="ebd0a0a2-b9e5-4433-87c0-68b6b72699c7",
+        )
+        efi = PartitionDevice(
+            "dev2",
+            size=Size("100 MiB"),
+            fmt=get_format("fat32", exists=True),
+            part_type_uuid="c12a7328-f81f-11d2-ba4b-00a0c93ec93b",
+        )
+
+        # EFI should not be defining Windows per-se
+        self._add_device(efi)
+        assert self.interface.GetExistingSystems() == []
+
+        self._add_device(sda1)
+
+        assert self.interface.GetExistingSystems() == [{
+            'os-name': get_variant(Str, 'Windows'),
+            'devices': get_variant(List[Str], ['dev1', 'dev2']),
+            'mount-points': get_variant(Dict[Str, Str], {}),
         }]
 
     @patch_dbus_publish_object
@@ -829,6 +992,29 @@ class DeviceTreeInterfaceTestCase(unittest.TestCase):
         self.interface.SetDeviceMountOptions("dev1", "")
         assert dev1.format.options == "defaults"
 
+    def test_get_mount_point_constraints(self):
+        """Test GetMountPointConstraints."""
+        result = self.interface.GetMountPointConstraints()
+        assert isinstance(result, list)
+        assert len(result) == 3
+
+        result = MountPointConstraintsData.from_structure_list(
+            self.interface.GetMountPointConstraints()
+        )
+        for mp in result:
+            assert mp.mount_point is not None
+            assert mp.required_filesystem_type is not None
+
+        # we are always adding / so it's a good candidate for testing
+        root = next(r for r in result if r.mount_point == "/")
+        assert root is not None
+        assert root.encryption_allowed is True
+        assert root.logical_volume_allowed is True
+        assert root.mount_point == "/"
+        assert root.required_filesystem_type == ""
+        assert root.required is True
+        assert root.recommended is False
+
 
 class DeviceTreeTasksTestCase(unittest.TestCase):
     """Test the storage tasks."""
@@ -890,6 +1076,7 @@ class DeviceTreeUtilsTestCase(unittest.TestCase):
         assert utils.is_supported_filesystem("disklabel") is False
         assert utils.is_supported_filesystem("ntfs") is False
         assert utils.is_supported_filesystem("tmpfs") is False
+        assert utils.is_supported_filesystem("gfs2") is False
 
     def test_find_stage2_device(self):
         """Test the find_stage2_device function."""

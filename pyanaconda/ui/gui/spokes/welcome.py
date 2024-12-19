@@ -17,30 +17,38 @@
 # Red Hat, Inc.
 #
 
-import sys
-import re
 import os
+import re
+import sys
 
 import gi
 
 gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk
 
+from pyanaconda import flags, localization
+from pyanaconda.anaconda_loggers import get_module_logger
+from pyanaconda.core.async_utils import async_action_wait
+from pyanaconda.core.constants import (
+    DEFAULT_LANG,
+    TIMEZONE_PRIORITY_LANGUAGE,
+    WINDOW_TITLE_TEXT,
+)
+from pyanaconda.core.i18n import _
+from pyanaconda.core.product import (
+    get_product_is_final_release,
+    get_product_name,
+    get_product_version,
+)
+from pyanaconda.core.util import ipmi_abort
+from pyanaconda.modules.common.constants.services import LOCALIZATION, TIMEZONE
+from pyanaconda.modules.common.util import is_module_available
 from pyanaconda.ui.gui.hubs.summary import SummaryHub
 from pyanaconda.ui.gui.spokes import StandaloneSpoke
-from pyanaconda.ui.gui.utils import setup_gtk_direction, escape_markup
-from pyanaconda.core.async_utils import async_action_wait
 from pyanaconda.ui.gui.spokes.lib.beta_warning_dialog import BetaWarningDialog
 from pyanaconda.ui.gui.spokes.lib.lang_locale_handler import LangLocaleHandler
-from pyanaconda import localization
-from pyanaconda.product import distributionText, isFinal, productName, productVersion
-from pyanaconda import flags
-from pyanaconda.core.i18n import _
-from pyanaconda.core.util import ipmi_abort
-from pyanaconda.core.constants import DEFAULT_LANG, WINDOW_TITLE_TEXT
-from pyanaconda.modules.common.constants.services import TIMEZONE, LOCALIZATION
-from pyanaconda.modules.common.util import is_module_available
-from pyanaconda.anaconda_loggers import get_module_logger
+from pyanaconda.ui.gui.utils import escape_markup, setup_gtk_direction
+from pyanaconda.ui.helpers import get_distribution_text
 
 log = get_module_logger(__name__)
 
@@ -99,6 +107,7 @@ class WelcomeLanguageSpoke(StandaloneSpoke, LangLocaleHandler):
         """Apply the selected locale."""
         locale = localization.setup_locale(locale, self._l12_module, text_mode=False)
         self._set_lang(locale)
+        self._try_set_timezone(locale)
 
     @property
     def completed(self):
@@ -171,7 +180,7 @@ class WelcomeLanguageSpoke(StandaloneSpoke, LangLocaleHandler):
             else:
                 # we don't have translation for this language,
                 # so dump all locales for it
-                locales = [l for l in locales if localization.get_language_id(l) != lang]
+                locales = [loc for loc in locales if localization.get_language_id(loc) != lang]
 
         # And then we add a separator after the selected best language
         # and any additional languages (that have translations) from geoip
@@ -203,14 +212,14 @@ class WelcomeLanguageSpoke(StandaloneSpoke, LangLocaleHandler):
         welcomeLabel = self.builder.get_object("welcomeLabel")
 
         welcomeLabel.set_text(_("WELCOME TO %(name)s %(version)s.") %
-                {"name" : productName.upper(), "version" : productVersion})         # pylint: disable=no-member
+                {"name" : get_product_name().upper(), "version" : get_product_version()})
 
         # Retranslate the language (filtering) entry's placeholder text
         languageEntry = self.builder.get_object("languageEntry")
         languageEntry.set_placeholder_text(_("Type here to search."))
 
         # And of course, don't forget the underlying window.
-        self.window.set_property("distribution", distributionText())
+        self.window.set_property("distribution", get_distribution_text())
         self.window.retranslate()
 
         # Retranslate the window title text
@@ -272,7 +281,7 @@ class WelcomeLanguageSpoke(StandaloneSpoke, LangLocaleHandler):
     # warning dialog first.
     def _on_continue_clicked(self, window, user_data=None):
         # Don't display the betanag dialog if this is the final release.
-        if not isFinal:
+        if not get_product_is_final_release():
             dialog = BetaWarningDialog(self.data)
 
             with self.main_window.enlightbox(dialog.window):
@@ -306,3 +315,12 @@ class WelcomeLanguageSpoke(StandaloneSpoke, LangLocaleHandler):
 
         # pylint: disable=environment-modify
         os.environ["LANG"] = lang
+
+    def _try_set_timezone(self, locale):
+        loc_timezones = localization.get_locale_timezones(locale)
+
+        # Some locales like 'Esperanto' don't have a timezone
+        if len(loc_timezones) == 0:
+            return
+
+        self._tz_module.SetTimezoneWithPriority(loc_timezones[0], TIMEZONE_PRIORITY_LANGUAGE)

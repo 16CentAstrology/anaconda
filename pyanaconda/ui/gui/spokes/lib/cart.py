@@ -17,16 +17,20 @@
 # Red Hat, Inc.
 #
 from blivet import arch
+from blivet.size import Size
 
-from pyanaconda.modules.common.structures.storage import DeviceData
-from pyanaconda.core.constants import BOOTLOADER_ENABLED, BOOTLOADER_LOCATION_MBR, \
-    BOOTLOADER_DRIVE_UNSET, BOOTLOADER_SKIPPED
+from pyanaconda.core.constants import (
+    BOOTLOADER_DRIVE_UNSET,
+    BOOTLOADER_ENABLED,
+    BOOTLOADER_LOCATION_MBR,
+    BOOTLOADER_SKIPPED,
+)
 from pyanaconda.core.i18n import C_
 from pyanaconda.modules.common.constants.objects import BOOTLOADER, DEVICE_TREE
 from pyanaconda.modules.common.constants.services import STORAGE
+from pyanaconda.modules.common.structures.storage import DeviceData
 from pyanaconda.ui.gui import GUIObject
 from pyanaconda.ui.lib.storage import get_disks_summary
-from blivet.size import Size
 
 __all__ = ["SelectedDisksDialog"]
 
@@ -89,13 +93,13 @@ class SelectedDisksDialog(GUIObject):
         return rc
 
     def _update_disks(self):
-        for device_name in self._disks:
+        for disk_id in self._disks:
             device_data = DeviceData.from_structure(
-                self._device_tree.GetDeviceData(device_name)
+                self._device_tree.GetDeviceData(disk_id)
             )
 
             device_free_space = self._device_tree.GetDiskFreeSpace(
-                [device_name]
+                [disk_id]
             )
 
             self._store.append([
@@ -106,7 +110,7 @@ class SelectedDisksDialog(GUIObject):
                 ),
                 str(Size(device_data.size)),
                 str(Size(device_free_space)),
-                device_name
+                device_data.name
             ])
 
     def _update_summary(self):

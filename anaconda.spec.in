@@ -2,7 +2,8 @@ Summary: Graphical system installer
 Name:    anaconda
 Version: @PACKAGE_VERSION@
 Release: @PACKAGE_RELEASE@%{?dist}
-License: GPLv2+ and MIT
+ExcludeArch: %{ix86}
+License: GPL-2.0-or-later
 URL:     http://fedoraproject.org/wiki/Anaconda
 
 # To generate Source0 do:
@@ -10,43 +11,42 @@ URL:     http://fedoraproject.org/wiki/Anaconda
 # git checkout -b archive-branch anaconda-%%{version}-%%{release}
 # ./autogen.sh
 # make dist
-Source0: https://github.com/rhinstaller/%{name}/releases/download/%{name}-%{version}-1/%{name}-%{version}.tar.bz2
+Source0: https://github.com/rhinstaller/%{name}/releases/download/%{name}-%{version}/%{name}-%{version}.tar.bz2
 
 # Versions of required components (done so we make sure the buildrequires
 # match the requires versions of things).
 
 %if ! 0%{?rhel}
+%bcond_without glade
 %bcond_without live
-%define blivetguiver 2.1.12-1
+%define blivetguiver 2.4.2-3
 %else
+%bcond_with glade
 %bcond_with live
 %endif
-%define cockpitver 275
 %define dasbusver 1.3
 %define dbusver 1.2.3
 %define dnfver 3.6.0
-%define dracutver 034-7
+%define dracutver 102-3
 %define fcoeutilsver 1.0.12-3.20100323git
 %define gettextver 0.19.8
 %define gtk3ver 3.22.17
-%define helpver 26.2-1
 %define isomd5sumver 1.0.10
 %define langtablever 0.0.60
 %define libarchivever 3.0.4
 %define libblockdevver 2.1
 %define libreportanacondaver 2.0.21-1
-%define libtimezonemapver 0.4.1-2
-%define libxklavierver 5.4
 %define mehver 0.23-1
 %define nmver 1.0
-%define pykickstartver 3.47-1
+%define pykickstartver 3.58-1
 %define pypartedver 2.5-2
-%define pythonblivetver 1:3.6.0-1
+%define pythonblivetver 1:3.9.0-1
 %define rpmver 4.15.0
 %define simplelinever 1.9.0-1
-%define subscriptionmanagerver 1.26
+%define subscriptionmanagerver 1.29.31
 %define utillinuxver 2.15.1
 %define rpmostreever 2023.2
+%define s390utilscorever 2.31.0
 
 BuildRequires: libtool
 BuildRequires: gettext-devel >= %{gettextver}
@@ -55,20 +55,19 @@ BuildRequires: gtk-doc
 BuildRequires: gtk3-devel-docs >= %{gtk3ver}
 BuildRequires: glib2-doc
 BuildRequires: gobject-introspection-devel
+%if %{with glade}
 BuildRequires: glade-devel
-BuildRequires: libgnomekbd-devel
-BuildRequires: libxklavier-devel >= %{libxklavierver}
+%endif
 BuildRequires: make
 BuildRequires: pango-devel
 BuildRequires: python3-devel
-BuildRequires: systemd
+BuildRequires: systemd-rpm-macros
 # rpm and libarchive are needed for driver disk handling
 BuildRequires: rpm-devel >= %{rpmver}
 BuildRequires: libarchive-devel >= %{libarchivever}
 %ifarch s390 s390x
 BuildRequires: s390utils-devel
 %endif
-BuildRequires: libtimezonemap-devel >= %{libtimezonemapver}
 
 # Tools used by the widgets resource bundle generation
 BuildRequires: gdk-pixbuf2-devel
@@ -81,14 +80,24 @@ Requires: anaconda-tui = %{version}-%{release}
 The anaconda package is a metapackage for the Anaconda installer.
 
 %package core
+# Since the binaries in anaconda-core are shell or Python scripts,
+# there's no need to generate a debuginfo package
+%define debug_package %{nil}
 Summary: Core of the Anaconda installer
+# core/signal.py is under MIT
+License: GPL-2.0-or-later AND MIT
 Requires: python3-libs
+%if 0%{?rhel} > 10 || 0%{?fedora} > 40
+Requires: python3-crypt-r
+%endif
 Requires: python3-dnf >= %{dnfver}
 Requires: python3-blivet >= %{pythonblivetver}
 Requires: python3-blockdev >= %{libblockdevver}
 Requires: python3-meh >= %{mehver}
+%if 0%{?rhel} < 10 || 0%{?fedora}
 Requires: libreport-anaconda >= %{libreportanacondaver}
-Requires: libselinux-python3
+%endif
+Requires: python3-libselinux
 Requires: python3-rpm >= %{rpmver}
 Requires: python3-pyparted >= %{pypartedver}
 Requires: python3-requests
@@ -111,24 +120,30 @@ Requires: subscription-manager >= %{subscriptionmanagerver}
 # which is apparently great for containers but unhelpful for the rest of us
 Requires: cracklib-dicts
 
+%if 0%{?rhel} < 10 || 0%{?fedora}
 Requires: teamd
+Requires: NetworkManager-team
+%endif
 %ifarch s390 s390x
 Requires: openssh
+Requires: s390utils-core >= %{s390utilscorever}
+Requires: dracut-network >= %{dracutver}
 %endif
 Requires: NetworkManager >= %{nmver}
 Requires: NetworkManager-libnm >= %{nmver}
-Requires: NetworkManager-team
 Requires: kbd
 Requires: chrony
 Requires: systemd
+%if 0%{?rhel} > 10 || 0%{?fedora}
 Requires: systemd-resolved
+%endif
 Requires: python3-pid
 
 # Required by the systemd service anaconda-fips.
 Requires: crypto-policies
-Requires: /usr/bin/update-crypto-policies
+Requires: crypto-policies-scripts
 
-# required because of the rescue mode and VNC question
+# required because of the rescue mode and RDP question
 Requires: anaconda-tui = %{version}-%{release}
 
 # Make sure we get the en locale one way or another
@@ -149,7 +164,6 @@ Obsoletes: anaconda-images <= 10
 Provides: anaconda-images = %{version}-%{release}
 Obsoletes: anaconda-runtime < %{version}-%{release}
 Provides: anaconda-runtime = %{version}-%{release}
-Obsoletes: booty <= 0.107-1
 
 %description core
 The anaconda-core package contains the program which was used to install your
@@ -160,12 +174,11 @@ system.
 
 %package live
 Summary: Live installation specific files and dependencies
+BuildArchitectures: noarch
 BuildRequires: desktop-file-utils
 # live installation currently implies a graphical installation
 Requires: anaconda-gui = %{version}-%{release}
-Requires: usermode
 Requires: zenity
-Requires: xisxwayland
 Recommends: xhost
 
 %description live
@@ -184,11 +197,11 @@ Requires: libblockdev-lvm-dbus
 # active directory/freeipa join support
 Requires: realmd
 Requires: isomd5sum >= %{isomd5sumver}
-%ifarch %{ix86} x86_64
+%ifarch x86_64
 Recommends: fcoe-utils >= %{fcoeutilsver}
 %endif
 # likely HFS+ resize support
-%ifarch %{ix86} x86_64
+%ifarch x86_64
 %if ! 0%{?rhel}
 Requires: hfsplus-tools
 %endif
@@ -203,11 +216,26 @@ Requires: tmux
 Requires: gdb
 # support for installation from image and live & live image installations
 Requires: rsync
+# An addon that allows enabling kdump at install time
+Recommends: kdump-anaconda-addon
+# basic filesystem tools
+%if ! 0%{?rhel}
+Requires: btrfs-progs
+Requires: ntfs-3g
+Requires: ntfsprogs
+Requires: f2fs-tools
+%endif
+Requires: xfsprogs
+Requires: dosfstools
+Requires: e2fsprogs
+# External tooling for managing NVMe-FC devices in the installation environment
+Recommends: nvme-cli
 
 %description install-env-deps
-The anaconda-install-env-deps metapackage lists all installation environment dependencies.
-This makes it possible for packages (such as Initial Setup) to depend on the main Anaconda package without
-pulling in all the install time dependencies as well.
+The anaconda-install-env-deps metapackage lists all installation environment
+dependencies. This makes it possible for packages (such as Initial Setup) to
+depend on the main Anaconda package without pulling in all the install time
+dependencies as well.
 
 %package install-img-deps
 Summary: Installation image specific dependencies
@@ -215,11 +243,13 @@ Summary: Installation image specific dependencies
 # Pull in most stuff with the -env- metapackage
 Requires: anaconda-install-env-deps = %{version}-%{release}
 # Require storage things that are only recommended in -env-
-%ifarch %{ix86} x86_64
+%ifarch x86_64
 Requires: fcoe-utils >= %{fcoeutilsver}
 %endif
 # only WeakRequires elsewhere and not guaranteed to be present
 Requires: device-mapper-multipath
+# only WeakRequires in -env-
+Requires: kdump-anaconda-addon
 %if ! 0%{?rhel}
 Requires: zram-generator-defaults
 %else
@@ -228,55 +258,47 @@ Requires: zram-generator
 # needed for proper driver disk support - if RPMs must be installed, a repo is needed
 Requires: createrepo_c
 # Display stuff moved from lorax templates
-Requires: xorg-x11-drivers
-Requires: xorg-x11-server-Xorg
-Requires: xrandr
-Requires: xrdb
-Requires: dbus-x11
 Requires: gsettings-desktop-schemas
 Requires: nm-connection-editor
 Requires: librsvg2
 Requires: gnome-kiosk
+Requires: gnome-remote-desktop
+# needed to generate RDP certs at runtime
+Requires: openssl
+# needed by GNOME kiosk but not declared a as explicit dep,
+# instead expected to be declared like this according to the
+# maintainers
+Requires: mesa-dri-drivers
 Requires: brltty
+Requires: python3-pam
 # dependencies for rpm-ostree payload module
 Requires: rpm-ostree >= %{rpmostreever}
 Requires: ostree
 # used by ostree command for native containers
 Requires: skopeo
+# External tooling for managing NVMe-FC devices in the installation environment
+Requires: nvme-cli
+# Needed for bootc
+Requires: podman
 
 %description install-img-deps
-The anaconda-install-img-deps metapackage lists all boot.iso installation image dependencies.
-Add this package to an image build (eg. with lorax) to ensure all Anaconda capabilities are supported in the resulting image.
-
-%package webui
-Summary: Cockpit based user interface for the Anaconda installer
-Requires: cockpit-bridge >= %{cockpitver}
-Requires: cockpit-ws >= %{cockpitver}
-# WebKit dependency needs to be specified there as cockpit web-view does not have a hard dependency on webkit as
-# it can normally fall back to a regular browser. This does not work in the limited installer
-# environment, so we need to make sure the WebKit API is available.
-Requires: webkit2gtk4.1
-
-%description webui
-This package contains Cockpit based user interface for the Anaconda installer.
+The anaconda-install-img-deps metapackage lists all boot.iso installation
+image dependencies. Add this package to an image build (eg. with lorax) to
+ensure all Anaconda capabilities are supported in the resulting image.
 
 %package gui
 Summary: Graphical user interface for the Anaconda installer
 Requires: anaconda-core = %{version}-%{release}
 Requires: anaconda-widgets = %{version}-%{release}
+Requires: python3-iso639
 Requires: python3-meh-gui >= %{mehver}
+Requires: python3-xkbregistry
 Requires: adwaita-icon-theme
-Requires: tigervnc-server-minimal
-Requires: libxklavier >= %{libxklavierver}
-Requires: libgnomekbd
-Requires: libtimezonemap >= %{libtimezonemapver}
+Requires: tecla
 Requires: nm-connection-editor
-Requires: keybinder3
 %ifnarch s390 s390x
 Requires: NetworkManager-wifi
 %endif
-Requires: anaconda-user-help >= %{helpver}
-Requires: yelp
 %if ! 0%{?rhel}
 Requires: blivet-gui-runtime >= %{blivetguiver}
 %endif
@@ -284,6 +306,8 @@ Requires: system-logos
 
 # Needed to compile the gsettings files
 BuildRequires: gsettings-desktop-schemas
+# Needed for gdbus-codegen
+BuildRequires: glib2-devel
 
 %description gui
 This package contains graphical user interface for the Anaconda installer.
@@ -301,17 +325,20 @@ Summary: A set of custom GTK+ widgets for use with anaconda
 Requires: %{__python3}
 
 %description widgets
-This package contains a set of custom GTK+ widgets used by the anaconda installer.
+This package contains a set of custom GTK+ widgets used by the anaconda
+installer.
 
 %package widgets-devel
 Summary: Development files for anaconda-widgets
+%if %{with glade}
 Requires: glade
+%endif
 Requires: %{name}-widgets%{?_isa} = %{version}-%{release}
 
 %description widgets-devel
-This package contains libraries and header files needed for writing the anaconda
-installer.  It also contains Python and Glade support files, as well as
-documentation for working with this library.
+This package contains libraries and header files needed for writing the
+anaconda installer.  It also contains Python and Glade support files,
+as well as documentation for working with this library.
 
 %package dracut
 Summary: The anaconda dracut module
@@ -320,6 +347,7 @@ Requires: dracut-network
 Requires: dracut-live
 Requires: xz
 Requires: python3-kickstart
+Requires: iputils
 
 %description dracut
 The 'anaconda' dracut module handles installer-specific boot tasks and
@@ -331,7 +359,7 @@ runtime on NFS/HTTP/FTP servers or local disks.
 
 %build
 # use actual build-time release number, not tarball creation time release number
-%configure ANACONDA_RELEASE=%{release}
+%configure ANACONDA_RELEASE=%{release} %{!?with_glade:--disable-glade}
 %{__make} %{?_smp_mflags}
 
 %install
@@ -350,15 +378,13 @@ desktop-file-install --dir=%{buildroot}%{_datadir}/applications %{buildroot}%{_d
 %else
 # Remove all live-installer files from the buildroot
 rm -rf \
-  %{buildroot}/%{_sysconfdir}/pam.d/liveinst \
-  %{buildroot}/%{_sysconfdir}/security/console.apps/liveinst \
   %{buildroot}/%{_sysconfdir}/xdg/autostart/liveinst-setup.desktop \
   %{buildroot}/%{_bindir}/liveinst \
   %{buildroot}/%{_libexecdir}/liveinst-setup.sh \
-  %{buildroot}/%{_sbindir}/liveinst \
   %{buildroot}/%{_datadir}/anaconda/gnome \
   %{buildroot}/%{_datadir}/anaconda/gnome/fedora-welcome \
   %{buildroot}/%{_datadir}/anaconda/gnome/org.fedoraproject.welcome-screen.desktop \
+  %{buildroot}/%{_datadir}/polkit-1/actions/* \
   %{buildroot}/%{_datadir}/applications/liveinst.desktop
 %endif
 
@@ -388,6 +414,7 @@ rm -rf \
 %{_sbindir}/anaconda
 %{_sbindir}/handle-sshpw
 %{_datadir}/anaconda
+%config(noreplace) %{_sysconfdir}/pam.d/anaconda
 %{_prefix}/libexec/anaconda
 %exclude %{_datadir}/anaconda/gnome
 %exclude %{_datadir}/anaconda/pixmaps
@@ -402,37 +429,28 @@ rm -rf \
 %exclude %{python3_sitearch}/pyanaconda/ui/gui/*
 %exclude %{python3_sitearch}/pyanaconda/ui/tui/*
 %{_bindir}/anaconda-cleanup
+# Installer configuration files aren’t updated post-installation,
+# so the noreplace flag doesn't offer a practical benefit in this context.
+# It is added to silence the rpmlint conffile-without-noreplace-flag warning.
 %dir %{_sysconfdir}/%{name}
-%config %{_sysconfdir}/%{name}/*
+%config(noreplace) %{_sysconfdir}/%{name}/*
 %dir %{_sysconfdir}/%{name}/conf.d
-%config %{_sysconfdir}/%{name}/conf.d/*
+%config(noreplace) %{_sysconfdir}/%{name}/conf.d/*
 %dir %{_sysconfdir}/%{name}/profile.d
-%config %{_sysconfdir}/%{name}/profile.d/*
+%config(noreplace) %{_sysconfdir}/%{name}/profile.d/*
 
 %if %{with live}
 # do not provide the live subpackage on RHEL
 
 %files live
 %{_bindir}/liveinst
-%{_sbindir}/liveinst
-%config(noreplace) %{_sysconfdir}/pam.d/*
-%config(noreplace) %{_sysconfdir}/security/console.apps/*
+%{_datadir}/polkit-1/actions/*
 %{_libexecdir}/liveinst-setup.sh
 %{_datadir}/applications/*.desktop
 %{_datadir}/anaconda/gnome
-%{_sysconfdir}/xdg/autostart/*.desktop
+%config(noreplace) %{_sysconfdir}/xdg/autostart/*.desktop
 
 %endif
-
-%files webui
-%dir %{_datadir}/cockpit/anaconda-webui
-%{_datadir}/cockpit/anaconda-webui/index.js.LICENSE.txt.gz
-%{_datadir}/cockpit/anaconda-webui/index.html.gz
-%{_datadir}/cockpit/anaconda-webui/index.js.gz
-%{_datadir}/cockpit/anaconda-webui/index.css.gz
-%{_datadir}/cockpit/anaconda-webui/manifest.json
-%{_datadir}/metainfo/org.cockpit-project.anaconda-webui.metainfo.xml
-%{_datadir}/cockpit/anaconda-webui/po.*.js.gz
 
 %files gui
 %{python3_sitearch}/pyanaconda/ui/gui/*
@@ -445,6 +463,7 @@ rm -rf \
 %endif
 %{_datadir}/anaconda/window-manager
 %{_datadir}/anaconda/anaconda-gtk.css
+%{_datadir}/anaconda/gtk-4.0/settings.ini
 
 %files tui
 %{python3_sitearch}/pyanaconda/rescue.py
@@ -457,10 +476,12 @@ rm -rf \
 %{python3_sitearch}/gi/overrides/*
 
 %files widgets-devel
-%{_libdir}/libAnacondaWidgets.so
-%{_libdir}/glade/modules/libAnacondaWidgets.so
 %{_includedir}/*
+%{_libdir}/libAnacondaWidgets.so
+%if %{with glade}
+%{_libdir}/glade/modules/libAnacondaWidgets.so
 %{_datadir}/glade/catalogs/AnacondaWidgets.xml
+%endif
 %{_datadir}/gtk-doc
 
 %files dracut
@@ -469,6 +490,1410 @@ rm -rf \
 %{_prefix}/libexec/anaconda/dd_*
 
 %changelog
+* Tue Dec 17 2024 github-actions <github-actions@github.com> - 42.20-1
+- Subscription code updates - adjust unit tests (mkolman)
+- Subscription code updates - GTK GUI (mkolman)
+- Subscription code updates - backend (mkolman)
+- Bump minimal subscription manager versions (mkolman)
+- network: improve logging of writing configuration (rvykydal)
+
+* Tue Dec 10 2024 github-actions <github-actions@github.com> - 42.19-1
+- Avoid side effect of ask rdp methods (jkonecny)
+- Do not crash if RDP is selected after regular GUI startup failed (#2326410)
+  (mkolman)
+
+* Tue Dec 03 2024 github-actions <github-actions@github.com> - 42.18-1
+- efi: Update __all__ dictionary (abologna)
+- docs: fix test container update doc (rvykydal)
+
+* Fri Nov 29 2024 github-actions <github-actions@github.com> - 42.17-1
+- pyanaconda: payload: split rsync command for /boot/efi to handle FAT
+  filesystem limitations (k.koukiou)
+- Only match liveinst.desktop app in live environment (ales.astone)
+- Show correct taskbar icon in Wayland (ales.astone)
+- Hide server-side-decorations in Wayland (ales.astone)
+- Revert "infra: Allow webui tests for external contributors" (DragonLich)
+- Fix new ruff errors (adamkankovsky)
+
+* Tue Nov 26 2024 github-actions <github-actions@github.com> - 42.16-1
+- util: correct errors and suppress stderr for common cases (riehecky)
+- payload: utilize `du` command for finding the required disk size in live OS
+  (k.koukiou)
+- Fix typo in anaconda hints (jstodola)
+- doc: Fix bullet list in Wayland migration rel note (jkonecny)
+- doc: Add dropped kernel options to Wayland relnote (jkonecny)
+- payload: raise exception on non zero exit code from rsync (k.koukiou)
+
+* Tue Nov 19 2024 github-actions <github-actions@github.com> - 42.15-1
+- doc: RDP boot option is not supported in live (jkonecny)
+- Fix RDP var contains string instead of bool (jkonecny)
+- Remove stray comma from widgets/configure.ac (vtrefny)
+- Explicitly place biosboot partition only on stage1 disk (vtrefny)
+- network: add warning for kickstart network configuration when running from
+  nfs (rvykydal)
+- liveinst: Allow running as a Wayland-native application (neal)
+
+* Tue Nov 12 2024 github-actions <github-actions@github.com> - 42.14-1
+
+* Fri Nov 08 2024 github-actions <github-actions@github.com> - 42.13-1
+- Test for kickstart scripts (akankovs)
+- Migrate the %%pre-install, %%post, %%onerror and %%traceback scripts
+  (akankovs)
+- Suppress warning from systemd user session (jkonecny)
+- Use log levels when getting logs from GLib (jkonecny)
+- Remove GLib logging condition for HW logging (jkonecny)
+- Move GLib imports to pyanaconda.core.glib (jkonecny)
+- Redirect only GLib loggers to Journal (mkolman)
+- docs: Collect release notes for F41 (k.koukiou)
+- pyanaconda: storage: workaround for Virtio Block Device being displayed as
+  0x1af4 (k.koukiou)
+
+* Fri Oct 25 2024 github-actions <github-actions@github.com> - 42.12-1
+- Revert "Update lorax build for pkexec command" (k.koukiou)
+- Update lorax build for pkexec command (adamkankovsky)
+- webui: Handle XAUTHORITY and XDG_RUNTIME_DIR (rstrode)
+- unit_test: extend existing device tree checks with isleaf attribute
+  (adamkankovsky)
+- Introduce isleaf to deviceData (adamkankovsky)
+- network: handle autoconnections policy for rhel upstream (rvykydal)
+
+* Wed Oct 23 2024 github-actions <github-actions@github.com> - 42.11-1
+- Fix permission errors from liveinst exit (jkonecny)
+- Remove redundant line in DNF payload (mkolman)
+- Fix vconsole layout doesn't work for ostree (jkonecny)
+- Fix checking whether a disk can be cleared during autopart (vtrefny)
+- Update spec config files list (ppolawsk)
+- Update makefile clean file list with RPMs (ppolawsk)
+
+* Tue Oct 22 2024 github-actions <github-actions@github.com> - 42.10-1
+- Fix crash on continue after a missing package non-critical error (mkolman)
+
+* Wed Oct 16 2024 github-actions <github-actions@github.com> - 42.9-1
+- Log stderr to journal only on supported platforms (jkonecny)
+- logging: fix the length limit of packages info dbg message (rvykydal)
+
+* Tue Oct 15 2024 github-actions <github-actions@github.com> - 42.8-1
+- Fix journal redirect on systems without journal (jkonecny)
+- unit_tests: drop DASDDevice.opts like in related blivet change (maier)
+- network: use consolidated s390 device configuration (#1802482,#1937049)
+  (maier)
+- write persistent config of any (dasd,zfcp,znet) s390 devices to sysroot
+  (#1802482,#1937049) (maier)
+- DASDDiscoverTask: use consolidated device configuration with zdev
+  (#1802482,#1937049) (maier)
+
+* Thu Oct 10 2024 github-actions <github-actions@github.com> - 42.7-1
+- Add GRD test coverage (jkonecny)
+- Improve docs in gnome_remote_desktop source (jkonecny)
+- Check return values from GRD calls (jkonecny)
+- Create a shortcut method for GRD failure (jkonecny)
+- Obtain hostname for RDP asynchronously (jkonecny)
+- Print connect info after starting GRD server (jkonecny)
+- Fix starting anaconda on z/VM and LPAR s390x (jstodola)
+- Create GRDServer class only when required (jkonecny)
+- Disable fedora-cisco repository in our containers (jkonecny)
+- Fix typo in the GRD source file name (jkonecny)
+- Do not change compositor options when not defined (jkonecny)
+- Add release-notes for Wayland migration (jkonecny)
+- Set --rdp in liveinst unsupported (jkonecny)
+- Remove Wayland detection logic from code (jkonecny)
+- Do not create GRDServer on Live ISO (jkonecny)
+- Remove dead spice_vd_agent code (jkonecny)
+- Switch keyboard management to Localed (jkonecny)
+- Add localed signal support to LocaledWrapper (jkonecny)
+- Add missing support to localed for compositor (jkonecny)
+- Redirect output of various GNOME related tools to Journal (mkolman)
+- Remove leftover debugging message (mkolman)
+- Redirect Anaconda main process stderr to Journal (mkolman)
+- Cleanup remaining Xorg and VNC references and dead code (mkolman)
+- Handle inst.rdp in Dracut (mkolman)
+- Adjust to freerdp and GNOME package changes (mkolman)
+- Replace VNC support with GNOME remote desktop (mkolman)
+- Add RDP boot options & deprecate VNC boot options (mkolman)
+- Introduce GNOME remote desktop support (mkolman)
+- Rename usevnc flag & similar variables (mkolman)
+- Drop xrdb (jexposit)
+- Drop xrandr (jexposit)
+- Add unit tests for GkKeyboardManager and its API in localization module
+  (rvykydal)
+- Drop the X.Org server dependency (jexposit)
+- Drop libxklavier (jexposit)
+- Use GNOME Kiosk's API in LayoutIndicator (jexposit)
+- Setup gdbus-codegen (jexposit)
+- Use GNOME Kiosk's API in XklWrapper (jexposit)
+- Add GNOME Kiosk keyboard manager class (jexposit)
+- home reuse: add unit tests (rvykydal)
+- home reuse: define static and class methods (rvykydal)
+- home reuse: reuse mount options of reused mountpoins (rvykydal)
+- home reuse: check autopartitioning scheme against reused mountpoints
+  (rvykydal)
+- home reuse: require removing of bootloader partition explicitly (rvykydal)
+- home reuse: remove bootloader partitions implicitly (rvykydal)
+- home reuse: update existing OSs when applying partitioning (rvykydal)
+- home reuse: add support for /home reuse to automatic partitioning (rvykydal)
+
+* Tue Oct 08 2024 github-actions <github-actions@github.com> - 42.6-1
+
+* Tue Oct 01 2024 github-actions <github-actions@github.com> - 42.5-1
+- docs: Adjust CONTRIBUTING document to mention automatic linter checks
+  (k.koukiou)
+- docs: rule is covered by pylint (k.koukiou)
+- docs: rule is covered by pylint (k.koukiou)
+- Update tests for patition device data (adamkankovsky)
+- build: remove the Obsoletes line from the spec file for booty (k.koukiou)
+- build: fix: anaconda-core-debuginfo.x86_64: E: no-binary (k.koukiou)
+- build: fix: anaconda-core.x86_64: E: explicit-lib-dependency libselinux-
+  python3 (k.koukiou)
+- Take partition label from blivet (akankovs)
+- Update test for comunicate (akankovs)
+- webui: Saving webui-desktop log to anaconda.log (akankovs)
+
+* Tue Sep 24 2024 github-actions <github-actions@github.com> - 42.4-1
+- pyanaconda: fix incorrect access to --repo argument (k.koukiou)
+- util: log PID also when a created process terminates (k.koukiou)
+- Add release notes about dropping i686 builds (jkonecny)
+- Remove support for i686 builds (jkonecny)
+- Remove deprecated `method` boot option (k.koukiou)
+- configure: only append -fanalyzer when building with gcc (zhoujiacheng)
+- Fix check for biosboot partition in GRUB2.check (vtrefny)
+
+* Tue Sep 17 2024 github-actions <github-actions@github.com> - 42.3-1
+- Fix scheduling actions in reclaim space dialog (#2311936) (vtrefny)
+
+* Tue Sep 10 2024 github-actions <github-actions@github.com> - 42.2-1
+- security: call /usr/libexec/fips-setup-helper (asosedkin)
+
+* Mon Sep 02 2024 Katerina Koukiou <kkoukiou@redhat.com> - 42.1-1
+- Ignore all storage errors when trying to activate swaps (vtrefny)
+- build: stop pulling systemd as build dependency (kkoukiou)
+- webui: Move webui-desktop in libexec to our subdirectory (akankovs)
+
+* Tue Aug 27 2024 github-actions <github-actions@github.com> - 41.32-1
+
+* Thu Aug 22 2024 github-actions <github-actions@github.com> - 41.31-1
+- docs: update release note about modularity deprecation (kkoukiou)
+- Add support for creating LUKS HW-OPAL devices (vtrefny)
+- Adjust to pykickstart moving new partition and autopart commands to F41
+  (kkoukiou)
+- pyanaconda: remove code paths around module command parsing as this was
+  deprecated (kkoukiou)
+- Improve code based on min/max recommendation (jkonecny)
+- Support DNF5's config-manager (marusak.matej)
+- network: ignore kickstart configuration of nBFT devices (rvykydal)
+- network: do not dump configurations of nBFT devices (rvykydal)
+- network: ignore nBFT devices connections in network configuration (rvykydal)
+- network: add a test for ignoring ifname=nbft* for device renaming (rvykydal)
+- network: do not create empty dir for only ifname=nbft* options (rvykydal)
+- network: Avoid creating link files for 'nbft' interfaces (tbzatek)
+
+* Tue Aug 20 2024 github-actions <github-actions@github.com> - 41.30-1
+- Use proxy server also for FTP .treeinfo download (jkonecny)
+- Fix the VNC question (#2293672) (mkolman)
+- Check if text mode was actually requested by kickstart (#2293672) (mkolman)
+
+* Tue Aug 13 2024 github-actions <github-actions@github.com> - 41.29-1
+- Remove deprecated warnings for inst prefix (rolivier)
+- Fix using kickstart mount command with device ID (vtrefny)
+- Update documentation for the update_iso script (jkonecny)
+- Add support for Live ISO to rebuild_boot_iso (jkonecny)
+
+* Tue Aug 06 2024 github-actions <github-actions@github.com> - 41.28-1
+- Adjust custom partitioning and storage spokes to the device ID API (vtrefny)
+- Adjust resize module to the device ID API (vtrefny)
+- Add a custom function for recreating btrfs subvolumes (vtrefny)
+- Use blivet's "device ID" as a unique device identifier (vtrefny)
+- Fix mock LUKS devices logic in tests (vtrefny)
+- Fix checking for locked LUKS devices (vtrefny)
+- util: Add additional information for EFI systems (riehecky)
+- Add release note for network port devices' default configuration profiles
+  (rvykydal)
+
+* Tue Jul 30 2024 github-actions <github-actions@github.com> - 41.27-1
+- Remove threading compatibility layer (kkoukiou)
+
+* Tue Jul 23 2024 github-actions <github-actions@github.com> - 41.26-1
+- Don't use tmpfs in build if not enough RAM (lifto)
+- Document RHEL 10 specifics for container shell (mkolman)
+- storage: add EFI partition in the windows OS devices if it's detected
+  (kkoukiou)
+- storage: add windows system to GetExistingSystems (kkoukiou)
+- storage: store the partition type name in device attrs for partitions
+  (kkoukiou)
+- Clean up the code by removing the utils directory (rolivier)
+
+* Tue Jul 16 2024 github-actions <github-actions@github.com> - 41.25-1
+- makeupdates: Bump Python version in site packages path to 3.13 (vtrefny)
+- Apply suggestions from Rodolfo (martin.kolman)
+- Scripts for local boot.iso updates workflow (mkolman)
+- Fix unit_tests/pyanaconda_tests/core/test_threads.py:140:20: E721 (kkoukiou)
+- Fix pyanaconda/modules/network/nm_client.py:576:21: PLR1704 (kkoukiou)
+- Fix pyanaconda/core/users.py:408:21: PLR1704 (kkoukiou)
+
+* Tue Jul 09 2024 github-actions <github-actions@github.com> - 41.24-1
+- Update translations from Weblate for master (github-actions)
+- tests: storage: conditionally run btrfs tests if command is not removed
+  (kkoukiou)
+- tests: allow the module specification to contain removed commands (kkoukiou)
+
+* Tue Jul 02 2024 github-actions <github-actions@github.com> - 41.23-1
+- Update translations from Weblate for master (github-actions)
+- chore: remove unused atk in BaseWindow.c (freya)
+- Replace deprecated methods to avoid warnings (rolivier)
+- Do not mark ancestors of device with source or stage2 as protected (rvykydal)
+
+* Tue Jun 25 2024 github-actions <github-actions@github.com> - 41.22-1
+- Update translations from Weblate for master (github-actions)
+
+* Fri Jun 21 2024 github-actions <github-actions@github.com> - 41.21-1
+- Do not create default wired connections for bond ports (rvykydal)
+- Consolidate code for dumping network connections (rvykydal)
+- docs: Remove wrong test doc for /kickstart-tests (jkonecny)
+- Fix broken locale support in console check (jkonecny)
+- Migrate vnc tui spokes to runtime DBUS (akankovs)
+- tests: pylint: enable consider-iterating-dictionary rule and implement
+  suggestions (kkoukiou)
+- tests: pylint: enable consider-using-enumerate rule and implement suggestions
+  (kkoukiou)
+- tests: pylint: enable consider-using-dict-items rule and implement
+  suggestions (kkoukiou)
+- tests: explicitely whitelist violated pylint conventions (kkoukiou)
+- Update translations from Weblate for master (github-actions)
+- Support leavebootorder for bootupd (jkonecny)
+- bootupd: call bootupctl with --update-firmware (awilliam)
+- gui: fix setting timezone from locale in the Welcome spoke (kkoukiou)
+
+* Tue Jun 11 2024 github-actions <github-actions@github.com> - 41.20-1
+- Update translations from Weblate for master (github-actions)
+- Fix issues for new pylint check (jkonecny)
+- Use InconsistentParentSectorSize instead of InconsistentPVSectorSize
+  (vtrefny)
+- Do not require libreport on RHEL 10 (mkolman)
+- Update translations from Weblate for master (github-actions)
+- Get kickstart data via DBus (akankovs)
+- Adding a implementation for runtime and ui commands (akankovs)
+- Update tests for kickstart commands (akankovs)
+- Migration of the remaining kickstart commands to the Runtime module
+  (akankovs)
+
+* Tue Jun 04 2024 github-actions <github-actions@github.com> - 41.19-1
+- dracut: Remove 'linear' from modules to load (vtrefny)
+- Remove 'linear' from list of expected MD RAID levels (vtrefny)
+
+* Tue May 28 2024 github-actions <github-actions@github.com> - 41.18-1
+- Do not imply that Fedora ELN has an EULA (sgallagh)
+- Update translations from Weblate for master (github-actions)
+- Deprecate kickstart modularity module (marusak.matej)
+- Remove Javascript leftovers from Makefile (jkonecny)
+- Revert "Ignore npm packages files for translation" (jkonecny)
+- Update translations from Weblate for master (github-actions)
+- docs: Add guide how to debug/develop GH workflows (jkonecny)
+
+* Tue May 21 2024 github-actions <github-actions@github.com> - 41.17-1
+- RHEL moved from Bugzilla to Jira (jstodola)
+
+* Tue May 07 2024 github-actions <github-actions@github.com> - 41.16-1
+
+* Tue Apr 30 2024 github-actions <github-actions@github.com> - 41.15-1
+
+* Tue Apr 23 2024 github-actions <github-actions@github.com> - 41.14-1
+- Revert "infra: Packit fix empty jobs field" (kkoukiou)
+
+* Thu Apr 18 2024 github-actions <github-actions@github.com> - 41.13-1
+- Fix signature of the method passed to DNF (jkonecny)
+- Do not include teamd on RHEL (rvykydal)
+- network: guard team devices configuration in kickstart by capabilities
+  (rvykydal)
+
+* Wed Apr 17 2024 github-actions <github-actions@github.com> - 41.12-1
+- Mark unused variables with underscore when possible (kkoukiou)
+- Setup vulture for tests (akankovs)
+- Fix kickstart --dhcpclass option application (rvykydal)
+- packit: never sync changelog in the propose_downstream job (kkoukiou)
+- packit: Land a new upstream release automatically to centos-stream c9s
+  (kkoukiou)
+- Do not try to load sha256 module in intramfs (rvykydal)
+
+* Wed Apr 17 2024 github-actions <github-actions@github.com> - 41.11-1
+- The RPM tooling generates the compiled python so having automake do it is
+  redundant (kkoukiou)
+
+* Tue Apr 16 2024 github-actions <github-actions@github.com> - 41.10-1
+- network gui: use Capabilites API to guard adding of team device (rvykydal)
+- network: add Capabilities property to API (rvykydal)
+- Fix glade disable in Makefile (jkonecny)
+- build: Install systemd-resolved in ELN aka RHEL-11 (kkoukiou)
+
+* Tue Apr 09 2024 github-actions <github-actions@github.com> - 41.9-1
+- Update translations from Weblate for master (github-actions)
+
+* Tue Apr 02 2024 github-actions <github-actions@github.com> - 41.8-1
+- docs: seperate section for ci-status of the anaconda-webui repository
+  (kkoukiou)
+- docs: Remove / Update CI status badges for removed / moved workflows
+  (vslavik)
+- maint: anaconda.spec.in: drop unused usermode (consolehelper) (kkoukiou)
+- desired capacity tooltip text adapt language (bbrucezhang)
+- network: do not crash on destroyed device object in GUI (rvykydal)
+
+* Tue Mar 26 2024 github-actions <github-actions@github.com> - 41.7-1
+- Update translations from Weblate for master (github-actions)
+- Disable preexec for vtActivate() (mkolman)
+
+* Tue Mar 19 2024 github-actions <github-actions@github.com> - 41.6-1
+- install-img-deps: Require podman (walters)
+
+* Tue Mar 12 2024 github-actions <github-actions@github.com> - 41.5-1
+- Add release notes for flatpak_remote conf key (jkonecny)
+- Move hardcoded flatpak remote to configuration (jkonecny)
+- Update translations from Weblate for master (github-actions)
+
+* Tue Mar 05 2024 github-actions <github-actions@github.com> - 41.4-1
+- Update translations from Weblate for master (github-actions)
+- Add release note for new ping command in Dracut (jkonecny)
+- Add ping tool to Dracut (jkonecny)
+- tests: Run pylint again (vslavik)
+- tests: pylint: ignore problematic file for astroid (kkoukiou)
+- pylint: add new false positive (kkoukiou)
+- tests: pylint: remove unused false positive (kkoukiou)
+- pyanaconda: task: remove unused variable (kkoukiou)
+- maint: fix: W0707(raise-missing-from):pyanaconda/ui/webui/__init__.py:168,12
+  (kkoukiou)
+- pylint: Disable new warnings found by 3.x (vslavik)
+- tests: pylint: fix concat string (kkoukiou)
+- Gather also newly added virt-install command log. (rvykydal)
+- Copy /etc/resolv.conf to system only if there is no systemd-resolved
+  (rvykydal)
+- Revert "Do not copy /etc/resolv.conf to chroot before installation"
+  (rvykydal)
+- Add release note for NVMe-oF (vslavik)
+- Add a NVMe-FC tab to the Advanced Storage screen (vslavik)
+- Do not write LVM devices file during image installation (vtrefny)
+- Update the .glade file for the Advanced Storage screen (vponcova)
+- Filter out NVMe over Fibre Channel from local disks (vslavik)
+- Install nvme-cli on boot.iso (vslavik)
+- Lower permissions for kickstart logs in /tmp (jkonecny)
+
+* Tue Feb 27 2024 github-actions <github-actions@github.com> - 41.3-1
+- Update translations from Weblate for master (github-actions)
+- Add riscv64 support (U2FsdGVkX1)
+- Do not use systemd-resolved in installer environment on RHEL (rvykydal)
+- CONTRIBUTING: replace markdown with reStructuredText (pamolloy)
+- Ignore GFS2 when looking for supported filesystems (vtrefny)
+
+* Tue Feb 20 2024 github-actions <github-actions@github.com> - 41.2-1
+- Test for task category and category API (akankovs)
+- Creating categories dbus API for installation phases (akankovs)
+
+* Thu Feb 15 2024 Martin Kolman <mkolman@redhat.com> - 41.1-1
+- bump major version number for Rawhide after F40 branching (mkolman)
+
+* Tue Feb 13 2024 github-actions <github-actions@github.com> - 40.22-1
+- gui: Enforce the non-interactive text mode for dir and image installations
+  (vponcova)
+- Update translations from Weblate for master (github-actions)
+- Lower log file permission in /tmp (jkonecny)
+- Add utility function to set file mode (jkonecny)
+- Add release notes about proxy fix (jkonecny)
+- webui: Disable unsupported use cases and installation environments (vponcova)
+- Fix "proxy" boot option is printing inst. warning (#2177219) (jkonecny)
+- Fix kickstart proxy cmd in stage1 (#2177219) (jkonecny)
+- Use inst.proxy in stage1 (#2177219) (jkonecny)
+- startup: Set up the session bus on the boot.iso (vponcova)
+- Bump required version of blivet to 3.9.0 (vtrefny)
+- Allow reusing existing "empty" filesystems for / (vtrefny)
+- storage: Allow systemd-boot only for package installations (vponcova)
+- Resolve symlinks in ostree install bind mount destinations (#2262892)
+  (awilliam)
+- storage: Handle live images and inst.sdboot (jeremy.linton)
+- gui: Remove the graphical support for additional repositories (vponcova)
+- Add the attribute links to the device data (kkoukiou)
+
+* Tue Feb 06 2024 github-actions <github-actions@github.com> - 40.21-1
+- Update translations from Weblate for master (github-actions)
+- Deprecate timezone --isUtc, --ntpservers and --nontp kickstart options
+  (vponcova)
+- Remove the repo --ignoregroups kickstart option in Fedora 40 (vponcova)
+- Remove the logging --level kickstart option in Fedora 40 (vponcova)
+- Remove the method kickstart command in Fedora 40 (vponcova)
+- docs: Add a release note for removed/deprecated kickstart commands and
+  options (vponcova)
+- Remove the autostep kickstart command in Fedora 40 (vponcova)
+- Do not write newline to the webui pid file (jkonecny)
+- gui: Log information about blivet-gui failed import (vtrefny)
+- Make network spoke complete also in connecting state. (rvykydal)
+- Do not use libxklavier to list keyboard layouts (jexposit)
+- Do not use stringize and unicodeize from Blivet (vtrefny)
+- Remove the inst.nompath boot option (vponcova)
+- Remove support for timezone --isUtc, --ntpservers and --nontp kickstart
+  options (vponcova)
+- Remove no more used GetRequiredMountPoints API of devicetree viewer.
+  (rvykydal)
+- Set GTK 4 decoration layout (jexposit)
+- Add TUI for installing non-standard kernels (ozobal)
+- Add GUI option for installing 64k ARM kernel (ozobal)
+- Revert "Remove instperf" (vslavik)
+
+* Tue Jan 30 2024 github-actions <github-actions@github.com> - 40.20-1
+- docs: add section about multi-package updates (kkoukiou)
+
+* Tue Jan 30 2024 github-actions <github-actions@github.com> - 40.19-1
+- Update translations from Weblate for master (github-actions)
+- CONTRIBUTING: Add a note about adding RPMs to built images (vtrefny)
+- Include partitions without mountpoints in GetMountPointConstraints (rvykydal)
+- Do not crash on default None values of ostreecontainer command (rvykydal)
+- Remove libgnomekbd (jexposit)
+- Fix network spokes connectivity check (champetier.etienne)
+- storage: Make GPT-discoverable partitions (vslavik)
+- conf: Add a field for GPT discoverable partitions (vslavik)
+
+* Tue Jan 23 2024 github-actions <github-actions@github.com> - 40.18-1
+- Use flag file to signal backend is ready (jkonecny)
+- Start Firefox before Anaconda on Live (jkonecny)
+- Update translations from Weblate for master (github-actions)
+- Evaluate live keyboard sources safely (vslavik)
+- rescue: Don't allow to mount systems without a root device (vponcova)
+- gui: Redesign the Time & Date spoke (vponcova)
+- gui: Update the glade file of the Time & Date spoke (vponcova)
+- gui: Remove the timezone map from the Time & Date spoke (vponcova)
+- Update translations from Weblate for master (github-actions)
+
+* Fri Jan 12 2024 github-actions <github-actions@github.com> - 40.17-1
+- tests: Add a test case for the NVMe module (vtrefny)
+- Add a simple NVMe module for NVMe Fabrics support (vtrefny)
+- Disable LVM devices file when running image installs (vtrefny)
+- Update translations from Weblate for master (github-actions)
+- Fixed file-write operation to a public directory (ataf)
+- gui: Improve the position of the Encrypt checkbox in the Container dialog
+  (vponcova)
+- storage: Set the default LUKS version for interactive partitioning (vponcova)
+- gui: Remove support for the LUKS version selection (vponcova)
+- Update translations from Weblate for master (github-actions)
+- docs: Fix commit-log.rst after JIRA switch (jkonecny)
+- Update documentation for RHEL contributions (jkonecny)
+
+* Tue Dec 26 2023 github-actions <github-actions@github.com> - 40.16-1
+
+* Tue Dec 19 2023 github-actions <github-actions@github.com> - 40.15-1
+- fix missing emit of zfcp kickstart statements (maier)
+- DeviceTreeViewer: Add path-id attribute to zfcp-attached SCSI disks (maier)
+- fix missing WWID values for multipath devices in advanced storage UI
+  (#2046654) (maier)
+- Update translations from Weblate for master (github-actions)
+- storage: do not add /boot among required partitions (rvykydal)
+- storage: add a new more generic API for mount point constraints (rvykydal)
+- Update translations from Weblate for master (github-actions)
+- tests: no need in HFS+ on Apple Macs (vponcova)
+- storage: no need in HFS+ on Apple Macs (temap)
+- bootupd: Use --write-uuid (walters)
+- network: ignore BOOTIF connections when creating device configurations
+  (rvykydal)
+- network: ignore BOOTIF connections when looking for initramfs bond ports
+  (rvykydal)
+- anaconda-diskroot: wait before dying on media check fail (awilliam)
+
+* Tue Dec 12 2023 github-actions <github-actions@github.com> - 40.14-1
+
+* Tue Dec 05 2023 github-actions <github-actions@github.com> - 40.13-1
+- Keyboard layout descriptions: more liberal language name check (awilliam)
+- Don't prepend random language to keyboard layout names (awilliam)
+
+* Tue Dec 05 2023 github-actions <github-actions@github.com> - 40.12-1
+- Update translations from Weblate for master (github-actions)
+- docs: Add release note for bootupd support (vslavik)
+- bootloader: Detect bootupd and skip regular install (vslavik)
+- ostree: Use bootupd if installed by payload (vslavik)
+- storage: Ignore NVDIMM namespaces in a non-sector mode (vponcova)
+- storage: Remove support for NVDIMM namespaces (vponcova)
+- spec: Add noarch where applicable (vslavik)
+- bootloader: Create an installation task for collecting kernel arguments
+  (vponcova)
+- bootloader: Add the collect_arguments method (vponcova)
+- bootloader: Remove the install_boot_loader function (vponcova)
+
+* Wed Nov 22 2023 Katerina Koukiou <kkoukiou@redhat.com> - 40.11-1
+- Remove all support of the built-in help system (vponcova)
+- Make possible to start TUI with installed WebUI (akankovs)
+- workflows: Drop COCKPITUOUS_TOKEN from trigger-webui.yml (kkoukiou)
+- Use 'os.uname().machine' to get machine architecture instead of 'uname -i'
+  (kkoukiou)
+- docs: Describe l10n CI changes for new Fedoras (vslavik)
+- docs: Describe caveats for inst.sdboot and live (vslavik)
+- docs: Mention efibootmgr with the invalid byte bug (vslavik)
+- logging: split image package list message into 8K chunks (rvykydal)
+- webui: pixel tests reference update (account on review screen) (rvykydal)
+- webui: add account information to review screen (rvykydal)
+- Update translations from Weblate for master (github-actions)
+- Remove instperf (mkolman)
+- webui: update pixel test images (rvykydal)
+- webui: fix password strength indicator layout in horizontal form (rvykydal)
+- webui: update end2end tests for the new users screen (rvykydal)
+- webui: create required user when reaching a test step by default (rvykydal)
+- webui: allow to create user more easily for reaching a step in test
+  (rvykydal)
+- webui: add users screen to tests for sidebar navigation (rvykydal)
+- webui: add simple test for users screen (rvykydal)
+- webui: hide user screen on live images (rvykydal)
+- webui: make created user administarator by default (rvykydal)
+- webui: apply the created user to the backend (rvykydal)
+- webui: make partitioning reset on going back more robust (rvykydal)
+- webui: keep the state of Create Account UI (rvykydal)
+- webui: add simplest user name check to Create Accounts (rvykydal)
+- webui: share length password rule between users and disk encryption
+  (rvykydal)
+- webui: use password form component for Create Account screen (rvykydal)
+- webui: add a simple Create Account screen (rvykydal)
+- webui: move pasword form component into a separate file (rvykydal)
+- webui: move also password strength logic into pw form component (rvykydal)
+- webui: use dynamic rules in password form component (rvykydal)
+- spec: Remove dependency on jfsutils (vtrefny)
+- widgets: disable glade in RHEL builds (yselkowi)
+- Adjust test_mount_filesystems to the latest blivet changes (vtrefny)
+- webui: package.json: bump patternfly dependencies (kkoukiou)
+- webui: package.json: update some eslint packages (kkoukiou)
+- webui: package.json: use exact versions of all package dependencies
+  (kkoukiou)
+- webui: don't repeat code in the src/apis/ (kkoukiou)
+- webui: split src/apis/storage.js into multiple files (kkoukiou)
+- webui: tests: expect reboot when killing the webui-desktop script (kkoukiou)
+- webui: when rebooting the machine the dbus clients close and throw error
+  messages (kkoukiou)
+- webui: tests: Robustify JS error modal pixel test (kkoukiou)
+- webui: bump Cockpit version of testlib (kkoukiou)
+- webui: pixel-tests: wait for animations for finish before taking screenshots
+  (kkoukiou)
+- Update translations from Weblate for master (github-actions)
+- Add new substitution members in dnf tests (vslavik)
+- webui: Conditional enable networking hint (akankovs)
+
+* Tue Oct 24 2023 github-actions <github-actions@github.com> - 40.10-1
+- Update translations from Weblate for master (github-actions)
+- webui: use global password policy in DiskEncryption (rvykydal)
+- webui: add global state for password policies (rvykydal)
+- Add release note for the removal of screenshot support (mkolman)
+- Remove GUI screenshot support (mkolman)
+- Remove the use of the Keybinder library (mkolman)
+- Extend the Timezone DBus module (mkolman)
+- Webui: Fix for adding report for JS bugs (akankovs)
+- webui: remove step notification from the InstallationMethod component
+  (kkoukiou)
+- webui: document commit message suggestion for prefixing the ui name if
+  relevant (kkoukiou)
+- webui: get next button label and variant from the components (kkoukiou)
+- webui: move InstallationProgress component outside of the Wizard steps
+  (kkoukiou)
+- webui: get first step id by parsing the steps array (kkoukiou)
+- webui: remove logic for showing helpers in footer per component to the
+  components (kkoukiou)
+- webui: make installer.reach method more robust (rvykydal)
+- webui: be more robust in tests when moving to REVIEW screen (rvykydal)
+- webui: add report for JS bugs + test (kkoukiou)
+- docs: Document using customized ci containers (jkonecny)
+- test docs: Update tools list (vslavik)
+- docs: Describe release note gathering process. (vslavik)
+- docs: Describe updates for new Python version (vslavik)
+- docs: Collect release notes for F39 (vslavik)
+- webui: pass osRelease through context (kkoukiou)
+- webui: move code related to version parsing (beta) into separate component
+  (kkoukiou)
+- webui: use Optional Chaining operator where possible (kkoukiou)
+- webui: InstallationMethod: remove redundant nesting (kkoukiou)
+- webui: move conditional check for rendering ModifyStorage out of the
+  component itself (kkoukiou)
+- webui: pass system type through context (kkoukiou)
+- webui: split out components for disk selection to seperate file (kkoukiou)
+- logging: log content of /root/lorax-packages if available (rvykydal)
+- webui: unpin firefox version from updates.img (kkoukiou)
+- webui: send stderr from webui-desktop to the journal (kkoukiou)
+
+* Tue Oct 17 2023 github-actions <github-actions@github.com> - 40.9-1
+- webui: catch exceptions from the backend in all actions (kkoukiou)
+- Update translations from Weblate for master (github-actions)
+- webui: move per-page title, id, label and hidden state into the components
+  (kkoukiou)
+- webui: Drop global notifications in favor of the per page notifications
+  (kkoukiou)
+- webui: let's be consistent on how we hide steps (kkoukiou)
+- webui: sort some state variables alphabetically (kkoukiou)
+- webui: pass the properties only to the components that use these (kkoukiou)
+- payload: check finished dnf transaction for transation item errors (rvykydal)
+- webui: check existence of payload image when running testing VM (rvykydal)
+- webui: Test for unknown language review crash (akankovs)
+- webui: Avoid crash on non-translated languages (akankovs)
+- webui: mount the RequestsTable component only once requests are available
+  (kkoukiou)
+- webui: tests: wait for logo to get visible when openning the page (kkoukiou)
+- webui: do not show `equal disks` notification when the previous disks are not
+  loaded (kkoukiou)
+- webui: disable the whole form when disk re-scan is taking place (kkoukiou)
+- webui: introduce `isFormDisabled` global state property (kkoukiou)
+- webui: rebuild devices object in the store with the getDevicesAction
+  (kkoukiou)
+- webui: set form validity also at the initial load of the mount point mapping
+  (kkoukiou)
+- payload: don't check PKG_VERIFY dnf progress messages (rvykydal)
+- payload: do not detect success of dnf transaction by PGK_VERIFY progress
+  (rvykydal)
+- webui: utilize PasswordPolicies rules from the backend for disk encryption
+  (kkoukiou)
+- set_x_keyboard_defaults: drop space when calling supports_ascii (awilliam)
+- storage: Handle BTRFS with systemd-boot (jeremy.linton)
+
+* Tue Oct 10 2023 github-actions <github-actions@github.com> - 40.8-1
+- tests: Drop unused testing dir (vslavik)
+- webui: Install cockpit-storaged (martin)
+- webui: Support testing against a cockpit PR (martin)
+- webui: Reduce rpm download timeout (martin)
+- webui: Install all downloaded rpms (martin)
+- Update translations from Weblate for master (github-actions)
+- Revert "webui: pin down cockpit-* packages versions for gating purposes"
+  (martin)
+- webui: tests: temporarilly pin down firefox to unbreak CI (kkoukiou)
+- WebUI: drop eslint flowtype plugin (jvanderwaa)
+- pylint: Use 'exit' instead of 'do_exit' for pylint.lint.Run (vtrefny)
+- webui: replace specific checkEqualDisks with new checkIfArraysAreEqual helper
+  (kkoukiou)
+- webui: split 'Modify storage' modals into separate file (kkoukiou)
+- webui: utilize idPredix variable for ids in UnlockDialog component (kkoukiou)
+- webui: move code for updating backend requests to helper function (kkoukiou)
+- Drop kbd-legacy requirement in localization module (awilliam)
+
+* Tue Oct 03 2023 github-actions <github-actions@github.com> - 40.7-1
+- webui: tests: ignore the logo image selector in the pixel tests (kkoukiou)
+- webui: do not hardcode the required mount points in the getInitialRequests
+  (kkoukiou)
+- webui: helpers: Document storage helper methods (kkoukiou)
+- webui: reimplement checkDeviceInSubTree by re-using existing helper method
+  (kkoukiou)
+- webui: port dropdown to new PF5 implementation (akankovs)
+- Revert "tests: Run pytest in parallel on available cpu cores" (vslavik)
+- webui: add a logo to the header (akankovs)
+- install-{env,img}-deps: recommend/require kdump-anaconda-addon (awilliam)
+- Fix crash because of missing import statement (kkoukiou)
+- webui: prevent re-defining required mount points from the UI (kkoukiou)
+- Simplify keyboard layout handling, rely on localed more (awilliam)
+- tests: Run pytest in parallel on available cpu cores (vslavik)
+- tests: Don't hardcode file handle number (vslavik)
+- live: Report installation progress from rsync output (vslavik)
+- Change process return code handling in execReadlines (vslavik)
+- Count free space on btrfs subvolume mount points correctly (vslavik)
+
+* Tue Sep 26 2023 github-actions <github-actions@github.com> - 40.6-1
+- webui: robustify manual partitioning request manipulation (kkoukiou)
+- webui: split long line to more lines (kkoukiou)
+- webui: tests: improve add_mountpoint_row the remove_mountpoint_row helper
+  methods (kkoukiou)
+- webui: start using 'passphrase' always for LUKS instead of 'password'
+  (kkoukiou)
+- webui: refactor LUKS unlocking modal after designer feedback (kkoukiou)
+- webui: test: increase timeout when unlocking LUKS devices (kkoukiou)
+- webui: fix unexpected closing of the Unlock LUKS device dialog after wrong
+  password (kkoukiou)
+- Update translations from Weblate for master (github-actions)
+- webui: Check for required filesystem type for mount points (vtrefny)
+- webui: Get the required mountpoints from the backend (vtrefny)
+- storage: Add a function to get list of required mount points (vtrefny)
+- tests: Remove pep8 and pycodestyle (vslavik)
+- docs: Add efibootmgr non-unicode output to common bugs (vslavik)
+- webui: Unpin blivet-gui dependency from test/prepare-updates-img (vtrefny)
+- spec: Add depdendency on fs tools to anaconda-install-env-deps (vtrefny)
+
+* Tue Sep 19 2023 github-actions <github-actions@github.com> - 40.5-1
+- webui: Remove test for unformattable filesystems (vtrefny)
+- Update translations from Weblate for master (github-actions)
+- webui: Start blivet-gui with --keep-above (vtrefny)
+- webui: tests: remove unnecessary semilocon from python code (kkoukiou)
+- webui: tests: move all helpers for mount point assignment page to
+  test/helpers/storage (kkoukiou)
+- webui: tests: organize the storage helper functions into multiple classes
+  (kkoukiou)
+- webui: tests: pack checks for mount point assignment rows in one method call
+  (kkoukiou)
+- webui: adjust installation scenario hint messages after designer feedback
+  (kkoukiou)
+- webui: when multiple devices have the same name disable mount point mapping
+  scenario (kkoukiou)
+- liveinst: Don't exec pkexec (rstrode)
+- cppcheck: Pretend we know more macros (vslavik)
+- webui: Start blivet-gui with --auto-dev-updates (vtrefny)
+- webui: tests: wipefs on vda is done in the VirtInstallMachineCase setUp
+  (kkoukiou)
+- webui: check the BZ report URL length before sending it (rvykydal)
+- webui: move adding comment about log file attaching to proper component
+  (rvykydal)
+- Remove unused variable from makeupdates script (kkoukiou)
+- Fix install complete text (awilliam)
+
+* Tue Sep 12 2023 github-actions <github-actions@github.com> - 40.4-1
+- webui: reset partitioning when the user goes back from review screen
+  (kkoukiou)
+- webui: tests: remove double quotes from return result of  dbus call
+  (kkoukiou)
+- Add 'localhost-live' to ignored hostnames for device naming (vtrefny)
+- webui: do not hardcode the pretty name in installation progress (kkoukiou)
+- webui: Fix checking for locked LUKS devices (vtrefny)
+- webui: remove extra parenthesis (kkoukiou)
+- webui: fix a typo in pre-blivet dialog (rvykydal)
+- webui: update fonts in log review for BZ reporting for Patterfly v5
+  (rvykydal)
+- webui: fix button spacing in BZ error reporting dialog (rvykydal)
+
+* Thu Sep 07 2023 github-actions <github-actions@github.com> - 40.3-1
+- Use Firefox environment variables for styling (mkolman)
+- make: Pass interactive container arguments only for run (vslavik)
+- make: Add container run options (vslavik)
+- make: Expand the ambiguous container option -t (vslavik)
+- make: One option per line for all container calls (vslavik)
+- Remove old product.py (vslavik)
+- GUI: Move helper for window header distribution text (vslavik)
+- Convert usages of product to core.product (vslavik)
+- Stop using old product in constants (vslavik)
+- Replace all uses of product values via constants (vslavik)
+- Make old product just a wrapper of the new one (vslavik)
+- Add a new product.py (vslavik)
+- Copy /var/lib/gnome-initial-setup/state to installed system (rstrode)
+- webui: add pixel test for modify storage test (rvykydal)
+- webui: use Blivet-gui name instead of Blivet (rvykydal)
+- webui: add tests for modify storage dialogs (rvykydal)
+- webui: if blivet-gui exits earlier then the delay update the dialog
+  (rvykydal)
+- webui: do not show rescan dialog in case of critical error (rvykydal)
+- webui: make blivet-gui start failure a Critical Error (rvykydal)
+- webui: catch errors when spawning blivet-gui (rvykydal)
+- webui: add dialogs around launching blivet-gui (rvykydal)
+- webui: show error name in Critical Error dialog only if it exists (rvykydal)
+- core: Look up live user from PKEXEC_UID (rstrode)
+- Revert the ESP maximum size back to 600MiB (richard)
+- Docs: added to 'Common bugs and issues' workaround for setup on 4K block
+  devices (k0ste)
+
+* Tue Sep 05 2023 github-actions <github-actions@github.com> - 40.2-1
+- webui: tests: move wait for re-scanning to finish before moving forward with
+  the tests (kkoukiou)
+- webui: When re-scanning don't reset disk selection (kkoukiou)
+- Update translations from Weblate for master (github-actions)
+- webui: Show warning when trying to use non-ASCII LUKS passphrase (vtrefny)
+- Add a note about the need to rebuild containers after branching (mkolman)
+- Note to push to master branch after updating Rawhide config (mkolman)
+- Document the need for changing the l10n commit hash (mkolman)
+- Fix Cockpit CI docs for branching (mkolman)
+- Fix localization branch name in branching docs (mkolman)
+
+* Wed Aug 30 2023 Martin Kolman <mkolman@redhat.com> - 40.1-1
+- tests: Add a webui test case with EFI system (vtrefny)
+- webui: Show error when mounting /boot/efi to a non-EFI partition (vtrefny)
+- webui: Add /boot/efi to required mount points when in EFI mode (vtrefny)
+- tests: Add support for running webui tests in an EFI VM (vtrefny)
+- Update translations from Weblate for master (github-actions)
+- j2 render: Preserve hashbangs (vslavik)
+- j2 render: Flip logic for empty result (vslavik)
+- j2 render: Clean up details (vslavik)
+- webui: Do not show unusable devices in mount point assignment (vtrefny)
+- webui: Enable mount point mapping based on filesystem not partition (vtrefny)
+- webui: add basic test for sidebar navigation (#2233805) (rvykydal)
+- webui: do not reset validity of step id moving to the same step (#2233805)
+  (rvykydal)
+- webui: add offline version to BZ report dialog (rvykydal)
+- webui: monitor network connection state from the Anaconda backend (rvykydal)
+
+* Tue Aug 29 2023 github-actions <github-actions@github.com> - 39.33-1
+- webui: Update request IDs when removing mount point row (vtrefny)
+- Update translations from Weblate for master (github-actions)
+- Fix spelling mistake / typo: "Criticall error" (awilliam)
+- webui: Let error reporting dialog test area auto resize (kkoukiou)
+- webui: Show error when trying to reformat unsupported format (vtrefny)
+- Use `isinstance(x, t)` instead of `type(x) is t` (vslavik)
+- Ignore subprocess.run without the check parameter (vslavik)
+- storage: Add 'formattable' property to the format data (vtrefny)
+- Disable geolocation on the Fedora Workstation live image (mkolman)
+
+* Tue Aug 22 2023 github-actions <github-actions@github.com> - 39.32-1
+- liveinst: Ensure DBUS_SESSION_BUS_ADDRESS is set in live install (rstrode)
+- screensaver: Look at $PKEXEC_UID not $USERHELPER_UID (rstrode)
+- webui: disable disk selection while disks are being rescanned (kkoukiou)
+- webui: show spinner in the disk selection while the backend did not update
+  (kkoukiou)
+- WebUI: update pixel tests for Fedora 40 (jvanderwaa)
+- webui: show 25 rows in the bug report log review. (rvykydal)
+- webui: add option to report an issue to global menu (rvykydal)
+- webui: bump cockpit-* dependencies in updates.img (kkoukiou)
+- Update translations from Weblate for master (github-actions)
+- release-notes: Document support for compressed kernel modules in Driver Discs
+  (peter.georg)
+- Add documentation about support for compressed kernel modules (peter.georg)
+- dd_extract: Update test info to reflect added support for compressed kernel
+  modules (peter.georg)
+- dd_extract: Add test for zstd compressed kernel module (peter.georg)
+- dd_extract: Add test for xz compressed kernel module (peter.georg)
+- dd_extract: Add support for compressed kernel modules (peter.georg)
+
+* Tue Aug 22 2023 github-actions <github-actions@github.com> - 39.31-1
+- po: Don't try to delete extra.pot (vslavik)
+- tests: Rename test to match file with code (vslavik)
+- tests: Split localed wrapper from module (vslavik)
+- tests: Split live keyboard from module (vslavik)
+- tets: Split localization module task tests (vslavik)
+
+* Mon Aug 21 2023 github-actions <github-actions@github.com> - 39.30-1
+- webui: update pixel tests (kkoukiou)
+- webui: move groupedAdditional content to PageGroup as specified in the
+  documentation (kkoukiou)
+- webui: port disk selector to the new Select implementation (kkoukiou)
+- webui: tests: workaround non-unique selector for the modal (kkoukiou)
+- webui: Upgrade to Patternfly 5 (kkoukiou)
+- Improve image building docs (mkolman)
+- Improve image building docs (mkolman)
+- webui: Do not show unused devices on the review page (vtrefny)
+- liveinst: Port to polkit (rstrode)
+- webui: Fixed typo to launch Live OS ISO with test/webui_testvm.py script
+  (akankovs)
+- webui: Automatically prefill mount point for swap devices (vtrefny)
+- manual: Allow using swap without reformatting (vtrefny)
+- Update translations from Weblate for master (github-actions)
+- webui: Allow changing and removing duplicate required mount points (vtrefny)
+- webui: test editing of the log in error reporting dialog (rvykydal)
+- Correct spelling of "formatted" (awilliam)
+- webui: Remove obsolete check for btrfs reformat support (vtrefny)
+- Add realease notes for keyboard from live system (jkonecny)
+- Add support for virtual console keymap from live (jkonecny)
+- Add live environment keyboard settings support (jkonecny)
+- Don't directly copy webui files in makeupdates script (mkolman)
+- webui: increase default size of log review text area in critical error dialog
+  (rvykydal)
+- test: allow booting a Live OS ISO with test/webui_testvm.py script (kkoukiou)
+- webui: use monospace font in critical error dialog (rvykydal)
+- webui: disable error reporting button when reading log for review (rvykydal)
+- webui: in Critical Error test click to report to BZ only after the log is
+  read (rvykydal)
+- Move get_missing_keyboard_configuration method (jkonecny)
+- Fix typo in the LocalizationInterface docstring (jkonecny)
+- Add execWithCaptureAsLiveUser to run as liveuser (jkonecny)
+- Extract liveuser data from help to generic tooling (jkonecny)
+- make: Document downloading .po from l10n repo (vslavik)
+- make: Update POT from branch, not pinned commit (vslavik)
+- webui: tests: cleanup webui.log in the end of the test (kkoukiou)
+- webui: give better feedback to user after 'Report issue' was clicked
+  (kkoukiou)
+- webui: add testing of log existence in critical error handling (rvykydal)
+- webui: translate critical error context only in the dialog (rvykydal)
+- webui: use Critical Error dialog for critical failures on Back button
+  (rvykydal)
+- webui: use Critical Error dialog in installation progress (rvykydal)
+- webui: use Critical Error dialog to handle erros in getting data about
+  storage (rvykydal)
+- webui: display also the background wizard page with Critical Error dialog
+  (rvykydal)
+- webui: use form layout and add log review of journal (rvykydal)
+- webui: add button for reporting to Bugzilla to CriticalError dialog
+  (rvykydal)
+- webui: tests: convert testErrorHandling to a non-destructive test (kkoukiou)
+- webui: tests: remove unused variable (kkoukiou)
+- webui: use storage exception for critical error dialog test (rvykydal)
+- webui: move partition_disk to Storage helper class (rvykydal)
+- webui: use Critical Error dialog to handle erros in getting data about
+  storage (rvykydal)
+- webui: use Critical Error dialog for disks rescan (rvykydal)
+- webui: use Critical Error dialog in installation progress (rvykydal)
+- webui: add context to Critical Error dialog (rvykydal)
+- webui: Prevent the Anaconda window from being closed by keyboard shortcuts
+  (akankovs)
+- webui: fix make rsync not updating the test VM (kkoukiou)
+- webui: Back/Next button are not localized (akankovs)
+- webui: tests are expecting #mount-point-mapping-table-row-{rowId}-format
+  selector (kkoukiou)
+- webui: fix TestStorageMountPoints.testBasic (rvykydal)
+- webui: tests: use m.write for writing files (kkoukiou)
+- webui: tests: extend the TestInstallationProgress test to include reboot
+  (jvanderwaa)
+- webui: introduce a button to launch blivet GUI (kkoukiou)
+- webui: when using the remote option just relax the address that cockpit-ws
+  binds to (kkoukiou)
+- webui: After returning to InstallationLanguage, the next button does not work
+  (akankovs)
+- Remove PatternFly workaround from build.js (mkolman)
+- spec: Bump required blivet version to 3.8.1 (vtrefny)
+- webui: Changing of checkbox for switch (akankovs)
+- iscsi: Allow changing iSCSI initiator name once set (vtrefny)
+- Update translations from Weblate for master (github-actions)
+- webui: fix logic for when to re-create the partitioning (kkoukiou)
+- webui: compress dist files also on development builds (kkoukiou)
+- webui: webui-desktop: don't use tls when spawning cockpit-ws (kkoukiou)
+- docs: Add translation bumper to CI status page (vslavik)
+- webui: extend condition that blocks rendering of the installation scenario
+  step (kkoukiou)
+- Update translations from Weblate for master (github-actions)
+- webui: do not keep in the central state all possible created partitioning
+  objects (kkoukiou)
+
+* Thu Aug 03 2023 github-actions <github-actions@github.com> - 39.29-1
+- webui: spread the state update function into seperate hooks and useMemo
+  (kkoukiou)
+- webui: Clear mount point and reformat flag for removed requests (vtrefny)
+- manual: Return error when trying to use removed nested subvolumes (vtrefny)
+- webui: show 'format as' only when reformatting partition (kkoukiou)
+- webui: Empty value for input should not be null nor undefined (mmarusak)
+- webui: Define unique key for list on review page (mmarusak)
+- webui: Show partition size on review page (mmarusak)
+- manual: Ignore no-op mount point requests (vtrefny)
+- webui: when the disk is empty hide "Use free space" scenario (skobyda)
+- webui: InstallationScenario: assume non-availability (kkoukiou)
+- webui: update only the needed encryption state attributes (kkoukiou)
+- webui: scenarios is a global variable, no need to pass it as propertry
+  (kkoukiou)
+- webui: tests: use 'click' helper test method on radio buttons (kkoukiou)
+- webui: tests: next button is enabled before the screenshot (kkoukiou)
+- webui: update scenario availability state only after parsing all scenarios
+  (kkoukiou)
+- Ignore btrfs snapshots in mountpoint assignment (vtrefny)
+- webui: start using payload from the bots repository (kkoukiou)
+- webui: make 'Next' by default 'disabled' and let each component update it
+  (kkoukiou)
+- webui: Enable source maps and enable minification (mkolman)
+- webui: Add mount point assignment test case with LVM (vtrefny)
+- webui: Add mount point assignment test case with btrfs subvolumes (vtrefny)
+- webui: remove limitation for formating btrfs subvolumes (kkoukiou)
+- add another encrypted disk to test case (mahmoud-mahgoub1)
+- l10n: Lock to current HEAD (vslavik)
+- make: Add target to automatically bump l10n ref (vslavik)
+- make: Move l10n constants from configure.ac to include file (vslavik)
+- make: Add l10n config file with SHA variable, use (vslavik)
+
+* Tue Aug 01 2023 github-actions <github-actions@github.com> - 39.28-1
+- webui: update cockpit dependencies to the latest released in rawhide
+  (kkoukiou)
+- webui: tests: add method to partition disk (tomatus777)
+- webui: Quit button does not work on the Live image (akankovs)
+- webui: Update and simplify review page (mmarusak)
+- docs: use correct path for VM command (90795679+MahmoudHamdy02)
+- webui: Translate strings used in cockpit.format (mmarusak)
+- Allow reformatting of 'plain' btrfs volumes (vtrefny)
+- webui: catch also exceptions from GetDevicesAction when rescanning disks
+  (rvykydal)
+- webui: unpack GetDiskFreeSpace and GetDiskTotalSpace from array (skobyda)
+- webui: tests: remove duplicate pixel tests for the first storage page
+  (kkoukiou)
+- webui: tests: create a variable with the table row selector (kkoukiou)
+- webui: tests: simplify the open test helper (kkoukiou)
+- webui: tests: remove redundant check for disabled 'Next' button (kkoukiou)
+- webui: tests: add helper method for setting a valid password (kkoukiou)
+- webui: rename some components to more self explanatory names (kkoukiou)
+- webui: fix prefix for identifiers of the installation scenarios (kkoukiou)
+- webui: remove obsolete TODO (kkoukiou)
+- webui: change Alert on review screen to HelperText (mmarusak)
+- webui: Introduce cockpit-style debug() helper (martin)
+- Revert "Add GUI option for installing 64k ARM kernel" (jkonecny)
+- Revert "Add TUI for installing non-standard kernels" (jkonecny)
+- webui: debounce changes on the password confirmation field (kkoukiou)
+- webui: docs: fix documentation on how to re-create the updates.img (kkoukiou)
+- Simplify submodule subscription to storage changes (vslavik)
+- Enable iterating over managed modules (vslavik)
+- Use the new class in relevant Storage submodules (vslavik)
+- webui: Disable minification (mkolman)
+- Add a class for modules that keep track of storage (vslavik)
+- Use the submodule manager in Storage (vslavik)
+- Use the submodule manager in Runtime (vslavik)
+- Add a submodule manager class (vslavik)
+- webui: redesign and refactor custom partition mapper (kkoukiou)
+- webui: Add Firefox theme for use on Live media (mkolman)
+- webui: tests: Fix end to end tests to work with new storage design (zveleba)
+- webui: tests: Make reboot button selector more specific (zveleba)
+- webui: use term 'devices' not 'partitions' in the custom mountpoint step
+  (kkoukiou)
+- webui: debounce password quality checks to be done only once per 300ms
+  (kkoukiou)
+- tests: Update reference images for mountpoint assignment (vtrefny)
+- webui: Use device name instead of path as identifier (vtrefny)
+- tests: Fix expected device specs in check-storage (vtrefny)
+- webui: Use custom label when creating btrfs for tests (vtrefny)
+- Use blivet mount options for new subvolumes in mountpoint assignment
+  (vtrefny)
+- tui: Preserve blivet mount options in mountpoint assignment (vtrefny)
+- tui: allow to 'format' btrfs subvolumes in mount point assignment (rvykydal)
+- tui: Use name instead of path for devspec in mountpoint assignment (vtrefny)
+- tui: Use all btrfs subvolumes in mountpoint assignment (vtrefny)
+- webui: Update pixel tests broken from localization updates (kkoukiou)
+- ruff: Silence new warnings with 0.0.280 (vslavik)
+- webui: rename custom mountpoint assignment step to mountpoint mapper
+  (kkoukiou)
+- Check for webui with property (vslavik)
+
+* Tue Jul 25 2023 github-actions <github-actions@github.com> - 39.27-1
+- webui: if no scenario is available for selection show the options but
+  disabled (kkoukiou)
+- webui: new design for welcome page in live image (kkoukiou)
+- webui: rephrase text hints for disabled options (kkoukiou)
+- webui: make all actions return anonymous functions (kkoukiou)
+- webui: re-calculate the scenarios only if the selected devices or device data
+  changed (kkoukiou)
+- webui: tests: use installer helper 'reach' method for moving ahead multiple
+  steps (kkoukiou)
+- webui: fix typo 'screenWarning' for custom mountpoint selection (kkoukiou)
+- webui: select 'vda' disk instead of the scsi ram disk in the test (kkoukiou)
+- webui: safeguard access to deviceData properties to avoid crashes while state
+  is not fully loaded (kkoukiou)
+- webui: return a Promise when fetching all device data (kkoukiou)
+- webui: edit style files with errors (akankovs)
+- webui: setup lint for style files (akankovs)
+- tests: Fix expected value for "has_key" with latest blivet (vtrefny)
+- webui: tests: make some more tests non-destructive (kkoukiou)
+- webui: don't crash in case a AUTOMATIC partitioning object exists (kkoukiou)
+- webui: the encryption password screen is not subpage anymore (kkoukiou)
+- webui: Check for beta variable being undefined (mkolman)
+- Use DBus API to check for final release (mkolman)
+- webui: introduce an About screen (acruzgon)
+- Move more product-related values to the module itself (vslavik)
+- Simplify product-related constants (vslavik)
+- Drop the isFinal UI constructor parameter from WebUI (vslavik)
+- webui: do not silence exception when parsing languages from backend
+  (kkoukiou)
+- webui: language information should be fetched also for live media (kkoukiou)
+- Add minimal documentation to pyanaconda.product (vslavik)
+- Add IsFinal property to the UI module (vslavik)
+- webui: accept conf being undefined (yet) during a CriticalError (rvykydal)
+- webui: design adjustment on the disk encryption screen (kkoukiou)
+- spec: Honor 79 char limit for descriptions (vslavik)
+- webui: allow critical errors also in the first load of the application
+  (kkoukiou)
+- Add TUI for installing non-standard kernels (ozobal)
+- Add GUI option for installing 64k ARM kernel (ozobal)
+- Remove deprecated conf: kickstart_modules, addons_enabled (vslavik)
+
+* Tue Jul 18 2023 github-actions <github-actions@github.com> - 39.26-1
+- webui: introduce dialog to unlock existing locked LUKS partitions (kkoukiou)
+- Introduce 'has_key' property in the attrs of DeviceFormatData object
+  (kkoukiou)
+- makeupdates: Now targeting python 3.12 (vslavik)
+- webui: tests: more anaconda state cleanup for test teardown (kkoukiou)
+- webui: tests: wait for data initialization to finish before proceeding with
+  the tests (kkoukiou)
+- Update License tag in the spec file template to use SPDX syntax (dcantrell)
+- webui: Introduce new Critical error component (kkoukiou)
+- webui: return a promise when fetching all device data (kkoukiou)
+- webui: create new dbus client objects when address changes (kkoukiou)
+- ruff: Enable flake8-simplify checks (vslavik)
+- Fix ruff detections for RUF002 & RUF003 (vslavik)
+- ruff: Enable ruff checks (vslavik)
+- ruff: Enable flake8 logging format checks (vslavik)
+- ruff: Enable flake8 import conventions checks (vslavik)
+- Fix ruff detections after enabling pycodestyle warnings (vslavik)
+- ruff: Enable pycodestyle warning checks (vslavik)
+- Fix ruff detections after enabling pylint checks (vslavik)
+- ruff: Enable most of the "pylint" checks (vslavik)
+- webui: simplify webui-desktop script (kkoukiou)
+- Add possibility to run pylint-only test (jkonecny)
+- webui: tests: reset selected disks between test runs (kkoukiou)
+- webui: tests: use busctl instead of dbus-send in the test helper (kkoukiou)
+- webui: localization: fix react warning about missing key (kkoukiou)
+- webui: wait for all languages to be loaded before rendering languages page
+  (kkoukiou)
+
+* Thu Jul 13 2023 github-actions <github-actions@github.com> - 39.25-1
+- webui: replace the Tooltip with HelperText in Storage devices step (acruzgon)
+- webui: Hide the language selection screen on Live images (akankovs)
+- webui: tests: switch some storage tests to nondestructive (kkoukiou)
+- webui: fix disk selection not working when moving back to the disk selection
+  screen (kkoukiou)
+- webui: tests: check status of the bulk select checkbox in the helper
+  functions (kkoukiou)
+- Fix and add tests for the preexec changes (vslavik)
+- webui: tests: wait for the checkboxes to get initialized before taking
+  screenshot (kkoukiou)
+- Change startProgram preexec check to early exit style (vslavik)
+- Add do_preexec propagation also to execWithCapture and shutdownServer
+  (vslavik)
+- webui: add some helper debug logs in the storage page (kkoukiou)
+- webui: fetch device data on the initial app load (kkoukiou)
+- webui: correct the last partitioning getter (kkoukiou)
+- webui: pin down cockpit-ws and cockpit-bridge versions before the python
+  bridge release (kkoukiou)
+- webui: tests: implement a 'reach' helper method (kkoukiou)
+- Squashed 'translation-canary/' changes from 3bc2ad68a8..5bb81253b4 (vslavik)
+- webui: tests: restart cockpit-ws between tests (kkoukiou)
+- Use correct call assert method in flapak test (vslavik)
+- Handle subprocess disallowing preexec during shutdown (awilliam)
+
+* Tue Jul 11 2023 github-actions <github-actions@github.com> - 39.24-1
+- webui: extend the list of the data we need to wait for before showing the app
+  (kkoukiou)
+- webui: tests: attempt to rebustify tests by more carefully implementing the
+  page enter (kkoukiou)
+- webui: test: extend allowed journal messages for language tests (kkoukiou)
+- webui: tests: adjust next and back helper methods (kkoukiou)
+- webui: pin down cockpit-* packages versions for gating purposes (kkoukiou)
+- webui: if device selection changed since last partitioning request redo the
+  partitioning (kkoukiou)
+- webui: Disable strict host checking in SSH config snippet (mkolman)
+
+* Mon Jul 03 2023 github-actions <github-actions@github.com> - 39.23-1
+- webui: store system language information in the global store (kkoukiou)
+- webui: Start Web UI when the anaconda-webui package is installed (mkolman)
+- webui: remove redundant console.info (kkoukiou)
+- webui: always disable next button if the form is invalid (kkoukiou)
+- webui: when re-scanning disks or loading initial date disable the re-scan
+  button (kkoukiou)
+- webui: mount point assignment support (jvanderwaa)
+- webui: remove forgotten console.info object (kkoukiou)
+- WebUI: Change help drawer width (ozobal)
+- webui: show empty state while the selected scenario is not available
+  (kkoukiou)
+- webui: the value we want to take effect should be last in destructured object
+  (kkoukiou)
+- Fix cppcheck failure on gettext.h (jkonecny)
+- Inline testlib.sh file (jkonecny)
+- webui: Make RPM building DNF5 compatible (mkolman)
+- Allow showing passphrase when unlocking LUKS device (jstodola)
+
+* Tue Jun 27 2023 github-actions <github-actions@github.com> - 39.22-1
+- Update the bundled cockpit-desktop script (martin.kolman)
+- Revert "Revert "webui: start using custom webui-desktop script instead of
+  cockpit-desktop"" (martin.kolman)
+- docs: Document the distribution component (vponcova)
+
+* Tue Jun 27 2023 github-actions <github-actions@github.com> - 39.21-1
+- webui: Fix handling of END2END env variable in WebUI tests (zveleba)
+- webui: tests: wait for the webui to update disk selection instead of
+  asserting the state (kkoukiou)
+- webui: use the store as single source of truth for disk selection (kkoukiou)
+- webui: split actions per data type (kkoukiou)
+- webui: split reducers acording to the data type (kkoukiou)
+- webui: use useReducer also for language state collection (kkoukiou)
+- webui: start using useReducer for managing complicated state objects
+  centrally (kkoukiou)
+- WebUI: Switch Quit/Reboot button in Progress spoke (ozobal)
+- WebUI: update pixel tests for new tasks container (jvanderwaa)
+- WebUI: Use Cockpit's os-release implementation (jvanderwaa)
+- webui: test: ensure that disk selection is updated before taking screenshot
+  (kkoukiou)
+- webui: tests: increase specificity for the disk toggle selector (kkoukiou)
+- webui: tests: wait for drawer status instead of asserting it directly
+  (kkoukiou)
+- webui: tests: don't create screenshots in step_logger decorator for non
+  end2end tests (kkoukiou)
+- WebUI: Convert InstallationProgress to function (ozobal)
+- webui: tests: rename IntegrationTest class and associated file to End2EndTest
+  (kkoukiou)
+- webui: tests: rename 'integration' directory to 'end2end' (kkoukiou)
+- webui: remove some trailing whitespace from test files (kkoukiou)
+
+* Tue Jun 20 2023 github-actions <github-actions@github.com> - 39.20-1
+- webui: add PRETTY_NAME to use in title instead of anaconda generic title
+  (acruzgon)
+- Revert "WebUI: explicitly specify GITHUB_BASE for pixel test commands"
+  (kkoukiou)
+- webui: add expected journal messages coming from cockpit's new python bridge
+  (kkoukiou)
+- WebUI: Remove centering from loading screen (ozobal)
+- webui: show partitions of local standard disks (kkoukiou)
+- webui: increase timeout when downloading anaconda-webui rpm dependencies
+  (acruzgon)
+- webui: add PageSection variant 'wizard' to give Wizard in-page styling
+  (acruzgon)
+- webui: use fmt_to_fragments so that the translation does not break (kkoukiou)
+- Import BlockDev from blivet instead of gi (vtrefny)
+- Stop infinite wait for CDROM when KS is processed (#2209599) (jkonecny)
+
+* Tue Jun 13 2023 github-actions <github-actions@github.com> - 39.19-1
+- webui: remove redundant dashes from README (kkoukiou)
+- docs: remove confusion for which toolbox to use for webui development
+  (kkoukiou)
+- webui: enable linter for webui CI runs (kkoukiou)
+- Check minimal LUKS passphrase length in FIPS mode for Kickstart (vslavik)
+- GUI: Require 8 chars of LUKS passwords in FIPS mode (vslavik)
+- Use Firefox in kiosk mode for running the Web UI locally (mkolman)
+- Do not print error on inst.ks=cdrom|hd (#2077045) (jkonecny)
+- storage: fix resolving btrfs subvolumes from fstab (#2186158) (rvykydal)
+- storage: improve btrfs devices removing in custom partitioning (#2186158)
+  (rvykydal)
+- Don't override blivet's preferred disk label type by default (awilliam)
+
+* Tue Jun 06 2023 github-actions <github-actions@github.com> - 39.18-1
+- webui: change the language direction when language changes (kkoukiou)
+- Fix webui-tests workflow waiving (zveleba)
+- Add github-pr and xunit reporting to webui-tests workflow (zveleba)
+- Simplify user and group name test (vslavik)
+- Clean up imports (vslavik)
+- Block more usernames as reserved (vslavik)
+- Remove unused/duplicate WebUI e2e testplan (zveleba)
+- If nano is the default editor, use it for bug reports (vslavik)
+- webui: Fix malformed XML (vslavik)
+- WebUI: re-design the review screen for custom mount point (jvanderwaa)
+- WebUI: explicitly specify GITHUB_BASE for pixel test commands (jvanderwaa)
+- Reload translations dynamically without a browser reload (jvanderwaa)
+- Re-render app when language changes (jvanderwaa)
+
+* Tue May 30 2023 github-actions <github-actions@github.com> - 39.17-1
+- Remove unused parameter anaconda (vslavik)
+- Remove unused parameter opts (vslavik)
+- Remove unused parameter pass_to_boss (vslavik)
+- Rename parameters ks->ks_path (vslavik)
+- WebUI: move alert under header for review screen (jvanderwaa)
+- Reindent test file list (vslavik)
+- Fix ruff detections (vslavik)
+- Add ruff, a very fast linter (vslavik)
+- Move the User Interface module under Runtime (vslavik)
+- Increase the minimum EFI System Partition (ESP) size to 500MiB (richard)
+
+* Tue May 23 2023 github-actions <github-actions@github.com> - 39.16-1
+- Change driver_updates exit info messages to debug (#2154904) (jkonecny)
+- Add readme for the conf.d drop dir (vslavik)
+- webui: use the reason in title of disabled partitioing warning (rvykydal)
+- WebUI: improve handling of removal of testvm's (jvanderwaa)
+- webui: [pixel-tests] update microcopy of "erase-all" storage scenario
+  (rvykydal)
+- webui: update microcopy of "erase-all" storage scenario (rvykydal)
+- Add a draft release note for the Runtime module (vslavik)
+- Add tests for the Runtime and Dracut modules (vslavik)
+- Add the dracut command module (vslavik)
+- Add the Runtime module (vslavik)
+- Add release notes packaging Web UI (jkonecny)
+- Fix release notes link consistency (jkonecny)
+- docs: Add other f38 release notes (vslavik)
+- docs: Add vponcova f38 release notes (vslavik)
+- docs: Add F38 release notes for vslavik PRs (vslavik)
+- Create Fedora 38 release notes (jkonecny)
+- Remove link to the release notes template.rst (jkonecny)
+- WebUI: close embedded panel when clicking prev/next (jvanderwaa)
+- WebUI: update ESLINT to LINT (jvanderwaa)
+- WebUI: use StorageScenarioId in all components (jvanderwaa)
+- WebUI: set default storage scenario based on scenarios constant (jvanderwaa)
+- webui: use the same naming for disk images created in machine_install
+  (rvykydal)
+- webui: consolidate creating images in machine_install (rvykydal)
+
+* Tue May 16 2023 github-actions <github-actions@github.com> - 39.15-1
+- tests: Remove eslint unit test (vslavik)
+- docs: Add WebUI integration tests badge to CI status (vslavik)
+- Add new integration test cases: Storage encryption and Wizard navigation
+  (zveleba)
+- webui: commonLanguages can contains codes that are not in the locales the API
+  returns (kkoukiou)
+- webui: migrate to async syntax for promises in review screen (rvykydal)
+- localization: add Localization section and use_geolocation to configuration
+  (rvykydal)
+- WebUI: fix spelling of encrypted (jvanderwaa)
+- webui: create disk images for VirtInstallMachine in advance (rvykydal)
+- Add new post_install_step function to IntegrationTest class (zveleba)
+- Add missing log_step decorators to storage helper functions (zveleba)
+
+* Tue May 09 2023 github-actions <github-actions@github.com> - 39.14-1
+- webui: better source maps (kkoukiou)
+- conf: Missing geolocation provider URL disables it (vslavik)
+- webui: [pixel tests] update review screen for v1 of autopartiotioning
+  (rvykydal)
+- webui: update review screen for v1 of autopartiotioning (rvykydal)
+- webui: reset partitioning on going Back from review screen (rvykydal)
+- webui: don't use global scope for translated strings (kkoukiou)
+- Move from webpack to esbuild bundler (kkoukiou)
+- webui: some invalid code fixes (kkoukiou)
+
+* Tue May 02 2023 github-actions <github-actions@github.com> - 39.13-1
+- WebUI: fix eslint error (jvanderwaa)
+- WebUI: run eslint in CI (jvanderwaa)
+
+* Tue Apr 25 2023 github-actions <github-actions@github.com> - 39.12-1
+- WebUI: [pixel tests]  Hide progress stepper after finishing (rvykydal)
+- WebUI: allow webui_testvm to pick up development files (jvanderwaa)
+- pyanaconda: start cockpit-ws from a systemd unit (jvanderwaa)
+- webui: reset storage backend before autopart test (rvykydal)
+- WebUI: Update test for Hide progress stepper after finishing (rvykydal)
+- WebUI: Hide progress stepper after finishing (ozobal)
+- webui: [pixel tests] fix spacing of Storage Congfiguration options (rvykydal)
+- webui: fix spacing of Storage Congfiguration options (rvykydal)
+- Fix indefinite articles before "NFS" (jstodola)
+- Remove redundant return (vslavik)
+- Fix virt-install cockpit run on fedora-X images (jkonecny)
+- WebUI: Dynamically choose Quit/Reboot button label (ozobal)
+- WebUI: use Cockpit's run-tests (jvanderwaa)
+- WebUI: introduce a new MachineCase subclass for VirtInstallMachine
+  (jvanderwaa)
+- WebUI: touch dist/manifest.json explicitly (jvanderwaa)
+- Run webui-tests workflow on a testing runner for some time (rvykydal)
+- Add GH workflow to run webui integration tests in Permian on PR (rvykydal)
+
+* Tue Apr 18 2023 github-actions <github-actions@github.com> - 39.11-1
+- Add missing documentation about OEMDRV (#2171811) (jkonecny)
+- gui: Simplify invalid timezone handling. (vslavik)
+- Try to set timezone from language on welcome spoke (vslavik)
+- Revert "Remove the function get_locale_timezones" (vslavik)
+- Always set timezone with priority (vslavik)
+- Add timezone priority to module backend and interface (vslavik)
+- Fix logging to packaging.log (vponcova)
+- exception: only attach existent and non-empty files (#2185827) (awilliam)
+- WebUI: force symlink re-creation (jvanderwaa)
+- Don't set the __doc__ attribute (vponcova)
+- Remove the DeviceSetupError exception (vponcova)
+- Remove SetupDevice and TeardownDevice from DeviceTreeHandlerInterface
+  (vponcova)
+- Remove unused constants (vponcova)
+- Remove the DNFManager.remove_repository method (vponcova)
+- Remove the DNFManager.reset_substitution method (vponcova)
+- Remove the DNFManager.is_environment_valid method (vponcova)
+- Remove resolve_device from pyanaconda.payload.utils (vponcova)
+- Remove the TreeInfoMetadata._root_url attribute (vponcova)
+- po: fix (jvanderwaa)
+- WebUI: don't set step in React state (jvanderwaa)
+- WebUI: avoid relying on automated semicolon insertion (jvanderwaa)
+- .github: add codeql workflow for JavaScript (jvanderwaa)
+- WebUI: correct setState calls for SearchInput (jvanderwaa)
+
+* Tue Apr 11 2023 github-actions <github-actions@github.com> - 39.10-1
+- webui: update reference images (kkoukiou)
+- webui: update CockpitPoWebpackPlugin and adjust configuration options
+  (kkoukiou)
+- webui: update run-tests script (kkoukiou)
+- webui: build: Move to a webpack module (kkoukiou)
+- webui: modernize the makefile (kkoukiou)
+- webui: update integration tests for v1 of autopartitioning (rvykydal)
+- Fix wrong dracut timeout message (jkonecny)
+- Run webui-periodic workflow on a testing runner for some time (rvykydal)
+- Add GH workflow for periodic webui integration tests in Permian (rvykydal)
+- webui: update pixeltest reference (rvykydal)
+- webui: update microcopy plurals to remove "(s)" suffixes (rvykydal)
+- webui: add pixel tests for the new storage config screens (rvykydal)
+- webui: add test for autopartitioning (rvykydal)
+- webui: test that disk selection persists Next and Back (INSTALLER-3029)
+  (rvykydal)
+- webui: make not enough space warning in detail a phrase (rvykydal)
+- webui: add content for autopartitioning options details (rvykydal)
+- webui: allow weak passwords for disk encryption (rvykydal)
+- webui: fix tests for split Installation Destination step (rvykydal)
+- webui: add TODO for applyPartitioning (rvykydal)
+- webui: move some subcomponents out of components (rvykydal)
+- webui: implement Disk Encryption subscreens in scope of the single substep
+  (rvykydal)
+- webui: log exception in case of partitioning application error (rvykydal)
+- webui: keep disk selection in the UI when going back (rvykydal)
+- webui: add a tooltip hint to disabled autopartitioning scenarios (rvykydal)
+- webui: connect Storage Configuration to backend initalization mode (rvykydal)
+- webui: implement Storage Configuration (guided partitioning) (rvykydal)
+- webui: move storage validation to the last storage substep (rvykydal)
+- webui: add Disk Encryption subscreen skeleton (rvykydal)
+- webui: add Storage Configuration subscreen skeleton (rvykydal)
+- webui: move disk selection into a wizard substep (rvykydal)
+- Move the validation report to the payload manager (vponcova)
+- Use the DNF module in TUI and GUI (vponcova)
+- Extend the DNF module (vponcova)
+- Handle an undefined release version (vponcova)
+- Move the generate_treeinfo_repository function (vponcova)
+- Create the check_instances function for unit tests (vponcova)
+- oemdrv: wait up to 5 seconds for disks to be handled (rmetrich)
+
+* Tue Apr 04 2023 github-actions <github-actions@github.com> - 39.9-1
+- fsset: Catch SwapSpaceError when trying to activate swaps (vtrefny)
+- Add tests for threads (vslavik)
+- Add and use thread_manager.add_thread() (vslavik)
+- Use the simplified HDD source in the UI (vponcova)
+- Simplify the HDD source (vponcova)
+- Add the create_hdd_url function (vponcova)
+- Move thread tests according to renaming (vslavik)
+- Compatibility layer for threading->core.threads (vslavik)
+- Rename core module threading to threads (vslavik)
+- Move threading from pyanaconda to pyanaconda.core (vslavik)
+- Rename threadMgr to thread_manager (vslavik)
+- Allow showing proxy passwords on the installation source spoke (jstodola)
+- Allow showing passwords on the subscription spoke (jstodola)
+- Always hide the user password by default (jstodola)
+- Always hide the root password by default (jstodola)
+
 * Tue Mar 28 2023 github-actions <github-actions@github.com> - 39.8-1
 - Move ostreecontainer deps to install-img-deps (jkonecny)
 - Add 'vga' to the list of preserved kernel arguments (#2176782) (awilliam)

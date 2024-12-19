@@ -20,20 +20,28 @@
 import os
 import tempfile
 import unittest
+from contextlib import contextmanager
+from unittest.mock import MagicMock, Mock, call, patch
+
 import pytest
 import requests
-
-from contextlib import contextmanager
 from requests_file import FileAdapter
-from unittest.mock import patch, Mock, call
 
 from pyanaconda.core.configuration.anaconda import conf
 from pyanaconda.core.path import join_paths, touch
 from pyanaconda.modules.common.errors.installation import PayloadInstallationError
 from pyanaconda.modules.common.structures.live_image import LiveImageConfigurationData
-from pyanaconda.modules.payloads.payload.live_image.download_progress import DownloadProgress
-from pyanaconda.modules.payloads.payload.live_image.installation import VerifyImageChecksumTask, \
-    InstallFromImageTask, InstallFromTarTask, DownloadImageTask, MountImageTask, RemoveImageTask
+from pyanaconda.modules.payloads.payload.live_image.download_progress import (
+    DownloadProgress,
+)
+from pyanaconda.modules.payloads.payload.live_image.installation import (
+    DownloadImageTask,
+    InstallFromImageTask,
+    InstallFromTarTask,
+    MountImageTask,
+    RemoveImageTask,
+    VerifyImageChecksumTask,
+)
 from pyanaconda.modules.payloads.payload.live_os.utils import get_kernel_version_list
 
 
@@ -84,10 +92,18 @@ class LiveUtilsTestCase(unittest.TestCase):
 class InstallFromImageTaskTestCase(unittest.TestCase):
     """Test the InstallFromImageTask class."""
 
+    def _make_reader(self, rc):
+        reader = MagicMock()
+        reader.__iter__.return_value = []
+        reader.rc = rc
+        return reader
+
     @patch("pyanaconda.modules.payloads.payload.live_image.installation.os.sync")
     @patch("pyanaconda.modules.payloads.payload.live_image.installation.execWithRedirect")
-    def test_install_image_task(self, exec_with_redirect, os_sync):
+    @patch("pyanaconda.modules.payloads.payload.live_image.installation.execReadlines")
+    def test_install_image_task(self, exec_readlines, exec_with_redirect, os_sync):
         """Test installation from an image task."""
+        exec_readlines.return_value = self._make_reader(0)
         exec_with_redirect.return_value = 0
 
         with tempfile.TemporaryDirectory() as mount_point:
@@ -95,30 +111,49 @@ class InstallFromImageTaskTestCase(unittest.TestCase):
                 sysroot="/mnt/root",
                 mount_point=mount_point
             )
+
             task.run()
 
-        exec_with_redirect.assert_called_once_with("rsync", [
-            "-pogAXtlHrDx",
-            "--stats",
-            "--exclude", "/dev/",
-            "--exclude", "/proc/",
-            "--exclude", "/tmp/*",
-            "--exclude", "/sys/",
-            "--exclude", "/run/",
-            "--exclude", "/boot/*rescue*",
-            "--exclude", "/boot/loader/",
-            "--exclude", "/boot/efi/loader/",
-            "--exclude", "/etc/machine-id",
-            "--exclude", "/etc/machine-info",
-            mount_point + "/",
-            "/mnt/root"
-        ])
+            exec_readlines.assert_called_once_with("rsync", [
+                "-pogAXtlHrDx",
+                "--stats",
+                "--info=flist2,name,progress2",
+                "--no-inc-recursive",
+                "--exclude", "/dev/",
+                "--exclude", "/proc/",
+                "--exclude", "/tmp/*",
+                "--exclude", "/sys/",
+                "--exclude", "/run/",
+                "--exclude", "/boot/*rescue*",
+                "--exclude", "/boot/loader/",
+                "--exclude", "/boot/efi/",
+                "--exclude", "/etc/machine-id",
+                "--exclude", "/etc/machine-info",
+                mount_point + "/",
+                "/mnt/root"
+            ])
+
+            exec_with_redirect.assert_not_called()
+
+            # Create /boot/efi directory in mount point.
+            os.makedirs(join_paths(mount_point, "boot/efi"))
+            task.run()
+
+            exec_with_redirect.assert_called_once_with("rsync", [
+                "-rx",
+                "--stats",
+                "--info=flist2,name,progress2",
+                "--no-inc-recursive",
+                "--exclude", "/boot/efi/loader/",
+                mount_point + "/boot/efi/",
+                "/mnt/root/boot/efi"
+            ])
 
     @patch("pyanaconda.modules.payloads.payload.live_image.installation.os.sync")
-    @patch("pyanaconda.modules.payloads.payload.live_image.installation.execWithRedirect")
-    def test_install_image_task_failed_exception(self, exec_with_redirect, os_sync):
+    @patch("pyanaconda.modules.payloads.payload.live_image.installation.execReadlines")
+    def test_install_image_task_failed_exception(self, exec_readlines, os_sync):
         """Test installation from an image task with exception."""
-        exec_with_redirect.side_effect = OSError("Fake!")
+        exec_readlines.side_effect = OSError("Fake!")
 
         with tempfile.TemporaryDirectory() as mount_point:
             task = InstallFromImageTask(
@@ -130,24 +165,6 @@ class InstallFromImageTaskTestCase(unittest.TestCase):
                 task.run()
 
         msg = "Failed to install image: Fake!"
-        assert str(cm.value) == msg
-
-    @patch("pyanaconda.modules.payloads.payload.live_image.installation.os.sync")
-    @patch("pyanaconda.modules.payloads.payload.live_image.installation.execWithRedirect")
-    def test_install_image_task_failed_return_code(self, exec_with_redirect, os_sync):
-        """Test installation from an image task with bad return code."""
-        exec_with_redirect.return_value = 11
-
-        with tempfile.TemporaryDirectory() as mount_point:
-            task = InstallFromImageTask(
-                sysroot="/mnt/root",
-                mount_point=mount_point
-            )
-
-            with pytest.raises(PayloadInstallationError) as cm:
-                task.run()
-
-        msg = "Failed to install image: rsync exited with code 11"
         assert str(cm.value) == msg
 
 

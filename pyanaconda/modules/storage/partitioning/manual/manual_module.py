@@ -24,10 +24,12 @@ from pyanaconda.core.signal import Signal
 from pyanaconda.modules.common.structures.partitioning import MountPointRequest
 from pyanaconda.modules.storage.partitioning.base import PartitioningModule
 from pyanaconda.modules.storage.partitioning.constants import PartitioningMethod
-from pyanaconda.modules.storage.partitioning.manual.manual_interface import \
-    ManualPartitioningInterface
-from pyanaconda.modules.storage.partitioning.manual.manual_partitioning import \
-    ManualPartitioningTask
+from pyanaconda.modules.storage.partitioning.manual.manual_interface import (
+    ManualPartitioningInterface,
+)
+from pyanaconda.modules.storage.partitioning.manual.manual_partitioning import (
+    ManualPartitioningTask,
+)
 
 log = get_module_logger(__name__)
 
@@ -39,7 +41,7 @@ class ManualPartitioningModule(PartitioningModule):
         """Initialize the module."""
         super().__init__()
         self.requests_changed = Signal()
-        self._requests = list()
+        self._requests = []
 
     @property
     def partitioning_method(self):
@@ -57,7 +59,10 @@ class ManualPartitioningModule(PartitioningModule):
         for mount_data in data.mount.mount_points:
             request = MountPointRequest()
             request.mount_point = mount_data.mount_point
-            request.device_spec = mount_data.device
+
+            request.device_spec = None
+            request.ks_spec = mount_data.device
+
             request.reformat = mount_data.reformat
             request.format_type = mount_data.format
             request.format_options = mount_data.mkfs_opts
@@ -73,8 +78,15 @@ class ManualPartitioningModule(PartitioningModule):
         for request in self.requests:
             mount_data = data.MountData()
             mount_data.mount_point = request.mount_point
-            mount_data.device = request.device_spec
+
+            if request.device_spec:
+                device = self.storage.devicetree.get_device_by_device_id(request.device_spec)
+                mount_data.device = device.path
+            else:
+                mount_data.device = request.ks_spec
+
             mount_data.reformat = request.reformat
+
             mount_data.format = request.format_type
             mount_data.mkfs_opts = request.format_options
             mount_data.mount_opts = request.mount_options
@@ -131,7 +143,14 @@ class ManualPartitioningModule(PartitioningModule):
         """
         selected_disks = set(self._selected_disks)
 
-        for device in self.storage.devicetree.leaves:
+        for device in self.storage.devicetree.devices:
+            if not device.isleaf and not device.raw_device.type == "btrfs subvolume":
+                continue
+
+            # We don't want to allow to use snapshots in mount point assignment.
+            if device.raw_device.type == "btrfs snapshot":
+                continue
+
             # Is the device usable?
             if device.protected or device.size == Size(0):
                 continue
@@ -150,7 +169,13 @@ class ManualPartitioningModule(PartitioningModule):
         :return: an instance of MountPointRequest or None
         """
         for request in requests:
-            if device is self.storage.devicetree.resolve_device(request.device_spec):
+            if request.device_spec:
+                rdevice = self.storage.devicetree.get_device_by_device_id(request.device_spec)
+            else:
+                rdevice = self.storage.devicetree.resolve_device(request.ks_spec)
+            if device is rdevice:
+                if not request.device_spec:
+                    request.device_spec = device.device_id
                 return request
 
         return None
@@ -162,12 +187,15 @@ class ManualPartitioningModule(PartitioningModule):
         :return: an instance of MountPointRequest
         """
         request = MountPointRequest()
-        request.device_spec = device.path
+        request.device_spec = device.device_id
         request.format_type = device.format.type or ""
         request.reformat = False
 
-        if device.format.mountable and device.format.mountpoint:
-            request.mount_point = device.format.mountpoint
+        if device.format.mountable:
+            if device.format.mountpoint:
+                request.mount_point = device.format.mountpoint
+            if device.format.mountopts:
+                request.mount_options = device.format.mountopts
 
         return request
 

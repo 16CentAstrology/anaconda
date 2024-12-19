@@ -18,13 +18,16 @@
 import os
 import re
 
-from pyanaconda.modules.storage.bootloader.base import BootLoader, BootLoaderArguments,\
-    BootLoaderError
+from pyanaconda.anaconda_loggers import get_module_logger
 from pyanaconda.core import util
 from pyanaconda.core.configuration.anaconda import conf
-from pyanaconda.product import productName
+from pyanaconda.core.product import get_product_name
+from pyanaconda.modules.storage.bootloader.base import (
+    BootLoader,
+    BootLoaderArguments,
+    BootLoaderError,
+)
 
-from pyanaconda.anaconda_loggers import get_module_logger
 log = get_module_logger(__name__)
 
 __all__ = ["ZIPL"]
@@ -42,7 +45,7 @@ class ZIPL(BootLoader):
 
     @property
     def stage2_format_types(self):
-        if productName.startswith("Red Hat "):          # pylint: disable=no-member
+        if get_product_name().startswith("Red Hat "):  # pylint: disable=no-member
             return ["xfs", "ext4", "ext3", "ext2"]
         else:
             return ["ext4", "ext3", "ext2", "xfs"]

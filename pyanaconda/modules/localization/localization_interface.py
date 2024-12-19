@@ -18,13 +18,14 @@
 # Red Hat, Inc.
 #
 
-from pyanaconda.modules.common.structures.language import LanguageData, LocaleData
-from pyanaconda.modules.common.constants.services import LOCALIZATION
+from dasbus.server.interface import dbus_interface, dbus_signal
 from dasbus.server.property import emits_properties_changed
 from dasbus.typing import *  # pylint: disable=wildcard-import
+
 from pyanaconda.modules.common.base import KickstartModuleInterface
+from pyanaconda.modules.common.constants.services import LOCALIZATION
 from pyanaconda.modules.common.containers import TaskContainer
-from dasbus.server.interface import dbus_interface
+from pyanaconda.modules.common.structures.language import LanguageData, LocaleData
 
 
 @dbus_interface(LOCALIZATION.interface_name)
@@ -40,6 +41,10 @@ class LocalizationInterface(KickstartModuleInterface):
         self.watch_property("XLayouts", self.implementation.x_layouts_changed)
         self.watch_property("LayoutSwitchOptions", self.implementation.switch_options_changed)
         self.watch_property("KeyboardKickstarted", self.implementation.keyboard_seen_changed)
+        self.implementation.compositor_selected_layout_changed.connect(
+            self.CompositorSelectedLayoutChanged
+        )
+        self.implementation.compositor_layouts_changed.connect(self.CompositorLayoutsChanged)
 
     def GetLanguages(self) -> List[Str]:
         """Get languages with available translations.
@@ -179,7 +184,7 @@ class LocalizationInterface(KickstartModuleInterface):
         """Set the X layouts for the system.
 
         The layout is specified by values used by setxkbmap(1).  Accepts either
-        layout format (eg "cz") or the layout(variant) format (eg "cz (qerty)")
+        layout format (eg "cz") or the layout(variant) format (eg "cz (qwerty)")
 
         :param x_layouts: List of x layout specifications.
         """
@@ -237,3 +242,55 @@ class LocalizationInterface(KickstartModuleInterface):
         return TaskContainer.to_object_path(
             self.implementation.apply_keyboard_with_task()
         )
+
+    def GetCompositorSelectedLayout(self) -> Str:
+        """Get the activated keyboard layout.
+
+        :return: Current keyboard layout (e.g. "cz (qwerty)")
+        :rtype: str
+        """
+        return self.implementation.get_compositor_selected_layout()
+
+    def SetCompositorSelectedLayout(self, layout_variant: Str) -> Bool:
+        """Set the activated keyboard layout.
+
+        :param layout_variant: The layout to set, with format "layout (variant)"
+            (e.g. "cz (qwerty)")
+        :type layout_variant: str
+        :return: If the keyboard layout was activated
+        :rtype: bool
+        """
+        return self.implementation.set_compositor_selected_layout(layout_variant)
+
+    def SelectNextCompositorLayout(self):
+        """Set the next available layout as active."""
+        return self.implementation.select_next_compositor_layout()
+
+    @dbus_signal
+    def CompositorSelectedLayoutChanged(self, layout: Str):
+        """Signal emitted when the selected keyboard layout changes."""
+        pass
+
+    def GetCompositorLayouts(self) -> List[Str]:
+        """Get all available keyboard layouts.
+
+        :return: A list of keyboard layouts (e.g. ["cz (qwerty)", cn (mon_todo_galik)])
+        :rtype: list of strings
+        """
+        return self.implementation.get_compositor_layouts()
+
+    def SetCompositorLayouts(self, layout_variants: List[Str], options: List[Str]):
+        """Set the available keyboard layouts.
+
+        :param layout_variants: A list of keyboard layouts (e.g. ["cz (qwerty)",
+            cn (mon_todo_galik)])
+        :type layout_variants: list of strings
+        :param options: A list of switching options
+        :type options: list of strings
+        """
+        self.implementation.set_compositor_layouts(layout_variants, options)
+
+    @dbus_signal
+    def CompositorLayoutsChanged(self, layouts: List[Str]):
+        """Signal emitted when available layouts change."""
+        pass

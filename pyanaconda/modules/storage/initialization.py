@@ -15,7 +15,8 @@
 # License and may only be used or replicated with the express permission of
 # Red Hat, Inc.
 #
-from blivet import util as blivet_util, udev, arch
+from blivet import arch, blockdev, udev
+from blivet import util as blivet_util
 from blivet.devicelibs import crypto
 from blivet.flags import flags as blivet_flags
 from blivet.formats import get_device_format_class
@@ -24,10 +25,6 @@ from blivet.static_data import luks_data
 from pyanaconda.anaconda_loggers import get_module_logger
 from pyanaconda.anaconda_logging import program_log_lock
 from pyanaconda.core.configuration.anaconda import conf
-
-import gi
-gi.require_version("BlockDev", "2.0")
-from gi.repository import BlockDev as blockdev
 
 __all__ = ["enable_installer_mode"]
 
@@ -44,8 +41,11 @@ def enable_installer_mode():
 
     # We don't want image installs writing backups of the *image* metadata
     # into the *host's* /etc/lvm. This can get real messy on build systems.
+    # Same applies to system.devices file that shouldn't be populated with
+    # PV names from the system that creates the image
     if conf.target.is_image:
         blivet_flags.lvm_metadata_backup = False
+        blivet_flags.lvm_devices_file = False
 
     # Set the flags.
     blivet_flags.auto_dev_updates = True
@@ -69,7 +69,14 @@ def enable_installer_mode():
         _load_plugin_s390()
 
     # Set the device name regexes to ignore.
-    udev.ignored_device_names = [r'^mtd', r'^mmcblk.+boot', r'^mmcblk.+rpmb', r'^zram', '^ndblk']
+    udev.ignored_device_names = [
+        r'^mtd',
+        r'^mmcblk.+boot',
+        r'^mmcblk.+rpmb',
+        r'^zram',
+        r'^ndblk',
+        r'^pmem[0-9]+$',
+    ]
 
     # We need this so all the /dev/disk/* stuff is set up.
     udev.trigger(subsystem="block", action="change")

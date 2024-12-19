@@ -16,17 +16,18 @@
 # Red Hat, Inc.
 #
 import time
+
 import requests
 
-from pyanaconda.timezone import get_preferred_timezone, is_valid_timezone
+from pyanaconda.anaconda_loggers import get_module_logger
 from pyanaconda.core.configuration.anaconda import conf
 from pyanaconda.core.constants import NETWORK_CONNECTION_TIMEOUT
 from pyanaconda.modules.common.constants.services import NETWORK
 from pyanaconda.modules.common.structures.timezone import GeolocationData
 from pyanaconda.modules.common.task import Task
 from pyanaconda.modules.common.util import is_module_available
+from pyanaconda.timezone import get_preferred_timezone, is_valid_timezone
 
-from pyanaconda.anaconda_loggers import get_module_logger
 log = get_module_logger(__name__)
 
 
@@ -38,6 +39,10 @@ class GeolocationTask(Task):
 
     def run(self):
         url = conf.timezone.geolocation_provider
+
+        if not url:
+            log.info("Geoloc: skipping because no provider was set")
+            return GeolocationData()
 
         log.info("Geoloc: starting lookup using provider: %s", url)
         start_time = time.time()
